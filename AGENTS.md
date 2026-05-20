@@ -1,10 +1,14 @@
-# Protein_viewer Agent Guide
+# protein_viewer Agent Guide
 
 ## Purpose
-`Protein_viewer` is a standalone browser-based PDB hotspot viewer. It uses a static HTML page plus 3Dmol.js to display protein structures, add hotspots, color individual hotspots, delete hotspots, and render hotspot labels such as `A128`.
+`protein_viewer` is a standalone browser-based PDB hotspot viewer. It uses a static HTML page plus 3Dmol.js to display protein structures, add hotspots, color individual hotspots, delete hotspots, and render hotspot labels such as `A128`.
 
 ## Architecture
-- `build_hotspot_viewer_html.py` is the source of truth. Edit this file first.
+- `viewer_src/` contains the browser source of truth. Edit these files first:
+  - `viewer_src/template.html` for page structure.
+  - `viewer_src/styles.css` for styling.
+  - `viewer_src/viewer.js` for PDB parsing, hotspot state, and 3Dmol rendering.
+- `build_viewer.py` assembles `viewer_src/` and generates the runtime files.
 - `hotspot_viewer.html` is generated output kept for direct use.
 - `pdbs/manifest.json` and `hotspots/manifest.json` are generated output. Do not hand-edit them.
 - `hotspot_viewer.html` dynamically fetches `pdbs/manifest.json`, then fetches the selected `.pdb` file on demand.
@@ -16,7 +20,7 @@
 Run the viewer locally:
 
 ```bash
-python Protein_viewer/build_hotspot_viewer_html.py
+python protein_viewer/build_viewer.py
 ```
 
 Default URL:
@@ -28,32 +32,33 @@ http://127.0.0.1:8765/hotspot_viewer.html
 Build generated files without starting the server:
 
 ```bash
-python Protein_viewer/build_hotspot_viewer_html.py --build-only
+python protein_viewer/build_viewer.py --build-only
 ```
 
 Useful server options:
 
 ```bash
-python Protein_viewer/build_hotspot_viewer_html.py --no-browser
-python Protein_viewer/build_hotspot_viewer_html.py --port 8766
-python Protein_viewer/build_hotspot_viewer_html.py --host 127.0.0.1
+python protein_viewer/build_viewer.py --no-browser
+python protein_viewer/build_viewer.py --port 8766
+python protein_viewer/build_viewer.py --host 127.0.0.1
 ```
 
 Validate the script:
 
 ```bash
-python -m py_compile Protein_viewer/build_hotspot_viewer_html.py
-python Protein_viewer/build_hotspot_viewer_html.py --build-only
+python -m py_compile protein_viewer/build_viewer.py
+python protein_viewer/build_viewer.py --build-only
+python -m unittest discover protein_viewer/tests
 ```
 
 ## PDB Workflow
-- Add PDB files under `Protein_viewer/pdbs/`.
+- Add PDB files under `protein_viewer/pdbs/`.
 - Rerun the build script after adding, deleting, or renaming PDB files.
 - The build script regenerates `pdbs/manifest.json` from `pdbs/*.pdb`.
 - Use localhost, not `file://`, because dynamic `fetch()` of local PDB files is not reliable from `file://`.
 
 ## Hotspot TXT Workflow
-- Add hotspot text files under `Protein_viewer/hotspots/`.
+- Add hotspot text files under `protein_viewer/hotspots/`.
 - TXT contents use the same syntax as manual hotspot input, for example `A18, A200`.
 - Rerun the build script after adding, deleting, or renaming TXT files.
 - The build script regenerates `hotspots/manifest.json` from `hotspots/*.txt`.
@@ -67,9 +72,11 @@ python Protein_viewer/build_hotspot_viewer_html.py --build-only
 - Keep hotspot TXT loading dynamic through `fetch('hotspots/manifest.json')` and per-file `fetch(hotspotFile.path)`.
 - Do not reintroduce notebook, ipywidgets, or cell-output rendering as the primary UI.
 - Preserve the current hotspot behavior unless explicitly changing it: parse `A128`, `A:128`, `A 128`; avoid duplicate hotspots; allow per-hotspot color, deletion, and `Axxx` labels.
+- Regenerate `hotspot_viewer.html` after changing `viewer_src/` or `build_viewer.py`.
 
 ## Maintenance Notes
 - `__pycache__/` is generated and should not be kept.
 - `hotspot_viewer.html` is generated, but it is intentionally kept so users can run the viewer immediately.
+- `.brooks-lint.yaml` intentionally ignores generated output and PDB data so structure reviews focus on source files.
 - If the HTML grows close to PDB file sizes, check that PDB contents were not accidentally embedded.
 - Browser warnings about WebGL performance in headless tests are acceptable; `3Dmol.js failed to load` is not.

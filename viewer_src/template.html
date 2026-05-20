@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Protein Hotspot Viewer</title>
+  <script src="https://cdn.jsdelivr.net/npm/3dmol@2.5.4/build/3Dmol-min.js"></script>
+  <style>
+{{VIEWER_STYLES}}
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="sidebar">
+      <h1>Protein Hotspot Viewer</h1>
+
+      <div class="control-section">
+        <h2>Structure</h2>
+        <label for="pdbSelect">PDB</label>
+        <select id="pdbSelect"></select>
+        <div class="row" style="margin-top: 10px;">
+          <button id="reloadPdb">Reload PDB</button>
+          <button id="renderButton">Render</button>
+        </div>
+      </div>
+
+      <div class="control-section">
+        <h2>Chain Colors</h2>
+        <div class="row">
+          <div>
+            <label for="chainAColor">Chain A color</label>
+            <select id="chainAColor"></select>
+          </div>
+          <div>
+            <label for="chainBColor">Chain B color</label>
+            <select id="chainBColor"></select>
+          </div>
+        </div>
+        <div class="control-note" id="chainColorNote"></div>
+      </div>
+
+      <div class="control-section">
+        <h2>Hotspot Input</h2>
+        <label for="hotspotFileSelect">Hotspot file</label>
+        <div class="row">
+          <select id="hotspotFileSelect"></select>
+          <button id="loadHotspotFile">Load file</button>
+        </div>
+
+        <label for="hotspotInput">Manual hotspots</label>
+        <textarea id="hotspotInput" placeholder="A128, A160&#10;A:164 A 176"></textarea>
+
+        <div class="row">
+          <div>
+            <label for="newColor">Color for new hotspots</label>
+            <select id="newColor"></select>
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="addHotspots" class="primary">Add hotspots</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="control-section">
+        <h2>Selected Hotspot</h2>
+        <label for="selectedHotspot">Hotspot</label>
+        <select id="selectedHotspot"></select>
+        <div class="row">
+          <div>
+            <label for="selectedColor">Selected color</label>
+            <select id="selectedColor"></select>
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="deleteSelected" class="danger">Delete selected</button>
+          </div>
+        </div>
+        <button id="clearHotspots" style="margin-top: 10px;">Clear all hotspots</button>
+      </div>
+
+      <div class="status" id="status">Loading...</div>
+
+      <h2>Chains</h2>
+      <div id="sequencePanel"></div>
+
+      <h2>Selected Hotspots</h2>
+      <div id="hotspotPanel"></div>
+    </section>
+
+    <section class="stage">
+      <div class="viewer-head">
+        <strong id="viewerTitle">Structure</strong>
+        <span id="viewerMeta">One active 3Dmol viewer</span>
+      </div>
+      <div id="viewer"></div>
+    </section>
+  </main>
+
+  <script>
+{{VIEWER_SCRIPT}}
+  </script>
+</body>
+</html>

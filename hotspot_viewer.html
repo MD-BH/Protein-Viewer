@@ -899,7 +899,7 @@
       try {
         state.pdbs = await fetchManifest();
       } catch (error) {
-        setStatus(`${error.message}. Start a local HTTP server from Protein_viewer and rerun the build script after changing PDB files.`, 'error');
+        setStatus(`${error.message}. Start a local HTTP server from protein_viewer and rerun the build script after changing PDB files.`, 'error');
         renderSequences();
         renderHotspotTable();
         renderStructure();
