@@ -1,34 +1,6 @@
 [
   {
-    "name": "IL31_Q6EAL8.pdb",
-    "path": "pdbs/IL31_Q6EAL8.pdb"
-  },
-  {
-    "name": "TREX1_7TQO.pdb",
-    "path": "pdbs/TREX1_7TQO.pdb"
-  },
-  {
-    "name": "murine_TGFB1_AB_dimer_RFdiffusion.pdb",
-    "path": "pdbs/murine_TGFB1_AB_dimer_RFdiffusion.pdb"
-  },
-  {
-    "name": "rank001_run_127.pdb",
-    "path": "pdbs/rank001_run_127.pdb"
-  },
-  {
-    "name": "rank002_run_152.pdb",
-    "path": "pdbs/rank002_run_152.pdb"
-  },
-  {
-    "name": "rank003_run_37.pdb",
-    "path": "pdbs/rank003_run_37.pdb"
-  },
-  {
-    "name": "rank004_run_90.pdb",
-    "path": "pdbs/rank004_run_90.pdb"
-  },
-  {
-    "name": "rank005_run_177.pdb",
-    "path": "pdbs/rank005_run_177.pdb"
+    "name": "7TQO.pdb",
+    "path": "pdbs/7TQO.pdb"
   }
 ]

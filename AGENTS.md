@@ -26,8 +26,13 @@ python protein_viewer/build_viewer.py
 Default URL:
 
 ```text
-http://127.0.0.1:8765/hotspot_viewer.html
+http://127.0.0.1:8766/hotspot_viewer.html
 ```
+
+The server stops 15 seconds after the last viewer page closes, or after 60
+seconds without a heartbeat if the browser cannot send a close signal. When
+started with `--no-browser`, it waits for the first viewer page before applying
+the shutdown timers.
 
 Build generated files without starting the server:
 

@@ -356,6 +356,40 @@
       viewerMeta: document.getElementById('viewerMeta')
     };
 
+    function newViewerSessionId() {
+      return window.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    }
+
+    let viewerSessionId = newViewerSessionId();
+    let viewerSessionClosed = false;
+    let viewerHeartbeatTimer = null;
+
+    function heartbeatViewerSession() {
+      if (viewerSessionClosed) return;
+      fetch(`/__viewer/heartbeat?session=${encodeURIComponent(viewerSessionId)}`, { cache: 'no-store', keepalive: true }).catch(() => {});
+    }
+
+    function startViewerSession() {
+      viewerSessionId = newViewerSessionId();
+      viewerSessionClosed = false;
+      heartbeatViewerSession();
+      viewerHeartbeatTimer = setInterval(heartbeatViewerSession, 10000);
+    }
+
+    function closeViewerSession() {
+      if (viewerSessionClosed) return;
+      viewerSessionClosed = true;
+      clearInterval(viewerHeartbeatTimer);
+      if (navigator.sendBeacon) navigator.sendBeacon('/__viewer/close', viewerSessionId);
+    }
+
+    heartbeatViewerSession();
+    viewerHeartbeatTimer = setInterval(heartbeatViewerSession, 10000);
+    window.addEventListener('pagehide', closeViewerSession);
+    window.addEventListener('pageshow', event => {
+      if (event.persisted && viewerSessionClosed) startViewerSession();
+    });
+
     function escapeHtml(value) {
       return String(value ?? '').replace(/[&<>"']/g, char => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'

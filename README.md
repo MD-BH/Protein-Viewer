@@ -25,8 +25,12 @@ python protein_viewer/build_viewer.py
 Then open:
 
 ```text
-http://127.0.0.1:8765/hotspot_viewer.html
+http://127.0.0.1:8766/hotspot_viewer.html
 ```
+
+The local server stops 15 seconds after the last open viewer page closes. If the
+browser cannot send a close signal, the server stops after 60 seconds without a
+viewer heartbeat. With `--no-browser`, it waits for the first viewer page to open.
 
 From inside the repository:
 
