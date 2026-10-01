@@ -6,19 +6,26 @@
       MSE: 'M', SEC: 'U', PYL: 'O', ASX: 'B', GLX: 'Z', UNK: 'X'
     };
     const COLORS = [
-      { name: 'Red', hex: '#e11d48' },
-      { name: 'Orange', hex: '#f97316' },
-      { name: 'Blue', hex: '#2563eb' },
-      { name: 'Green', hex: '#16a34a' },
-      { name: 'Purple', hex: '#9333ea' }
+      { name: 'Red', hex: '#FF7185' },
+      { name: 'Orange', hex: '#FF995E' },
+      { name: 'Pink', hex: '#F080CF' },
+      { name: 'Purple', hex: '#C18BFF' },
+      { name: 'Blue', hex: '#7AA6FF' },
+      { name: 'Cyan', hex: '#58C9D2' },
+      { name: 'Green', hex: '#70D6A2' },
+      { name: 'Lime', hex: '#B8DA69' }
     ];
     const DEFAULT_COLOR = COLORS[0];
     const CHAIN_COLORS = [
-      { name: 'Gray', hex: '#cbd5e1' },
-      { name: 'Red', hex: '#e11d48' },
-      { name: 'Blue', hex: '#2563eb' },
-      { name: 'Green', hex: '#16a34a' },
-      { name: 'Purple', hex: '#9333ea' }
+      { name: 'Gray', hex: '#B7C8D6' },
+      { name: 'Red', hex: '#FF7185' },
+      { name: 'Orange', hex: '#FF995E' },
+      { name: 'Pink', hex: '#F080CF' },
+      { name: 'Purple', hex: '#C18BFF' },
+      { name: 'Blue', hex: '#7AA6FF' },
+      { name: 'Cyan', hex: '#58C9D2' },
+      { name: 'Green', hex: '#70D6A2' },
+      { name: 'Lime', hex: '#B8DA69' }
     ];
     const DEFAULT_CHAIN_COLOR = CHAIN_COLORS[0];
     const COLORABLE_CHAINS = ['A', 'B'];
@@ -30,6 +37,7 @@
       pdbTextCache: new Map(),
       hotspotTextCache: new Map(),
       pdbIndex: 0,
+      pdbLoadRequest: 0,
       pdbText: '',
       parsed: null,
       hotspots: [],
@@ -52,10 +60,16 @@
       chainColorNote: document.getElementById('chainColorNote'),
       status: document.getElementById('status'),
       selectedHotspot: document.getElementById('selectedHotspot'),
+      selectedHotspotSection: document.getElementById('selectedHotspotSection'),
       selectedColor: document.getElementById('selectedColor'),
       deleteSelected: document.getElementById('deleteSelected'),
+      locateHotspot: document.getElementById('locateHotspot'),
+      locateNote: document.getElementById('locateNote'),
       sequencePanel: document.getElementById('sequencePanel'),
+      sequenceSummary: document.getElementById('sequenceSummary'),
       hotspotPanel: document.getElementById('hotspotPanel'),
+      hotspotSummary: document.getElementById('hotspotSummary'),
+      hotspotResultsSection: document.getElementById('hotspotResultsSection'),
       viewer: document.getElementById('viewer'),
       viewerTitle: document.getElementById('viewerTitle'),
       viewerMeta: document.getElementById('viewerMeta')
@@ -121,7 +135,77 @@
       return CHAIN_COLORS.find(color => color.name === name) || DEFAULT_CHAIN_COLOR;
     }
 
-    function chainColorSelect(chain) {
+    function colorPickerValue(picker) {
+      return picker.dataset.colorValue;
+    }
+
+    function setColorPickerValue(picker, colorName) {
+      const color = picker.id.startsWith('chain') ? chainColorByName(colorName) : colorByName(colorName);
+      picker.dataset.colorValue = color.name;
+      picker.querySelector('.picker-current-name').textContent = color.name;
+      picker.querySelector('.picker-current-swatch').style.setProperty('--swatch-color', color.hex);
+      for (const option of picker.querySelectorAll('.color-option')) {
+        option.setAttribute('aria-pressed', String(option.dataset.colorName === color.name));
+      }
+    }
+
+    function setColorPickerDisabled(picker, disabled) {
+      const isDisabled = Boolean(disabled);
+      picker.setAttribute('aria-disabled', String(isDisabled));
+      const summary = picker.querySelector('summary');
+      summary.setAttribute('aria-disabled', String(isDisabled));
+      summary.tabIndex = isDisabled ? -1 : 0;
+      if (isDisabled) picker.open = false;
+      for (const option of picker.querySelectorAll('.color-option')) {
+        option.disabled = isDisabled;
+      }
+    }
+
+    function setupColorPicker(picker, colors, onSelect) {
+      const options = picker.querySelector('.color-options');
+      const summary = picker.querySelector('summary');
+      options.replaceChildren();
+
+      for (const color of colors) {
+        const option = document.createElement('button');
+        option.type = 'button';
+        option.className = 'color-option';
+        option.dataset.colorName = color.name;
+        option.setAttribute('aria-pressed', 'false');
+        const swatch = document.createElement('span');
+        swatch.className = 'palette-swatch';
+        swatch.style.setProperty('--swatch-color', color.hex);
+        swatch.setAttribute('aria-hidden', 'true');
+        const name = document.createElement('span');
+        name.className = 'color-option-name';
+        name.textContent = color.name;
+        option.append(swatch, name);
+        option.addEventListener('click', () => {
+          if (picker.getAttribute('aria-disabled') === 'true') return;
+          const changed = colorPickerValue(picker) !== color.name;
+          setColorPickerValue(picker, color.name);
+          picker.open = false;
+          summary.focus();
+          if (changed) onSelect();
+        });
+        options.append(option);
+      }
+
+      summary.addEventListener('click', event => {
+        if (picker.getAttribute('aria-disabled') === 'true') event.preventDefault();
+      });
+      picker.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && picker.open) {
+          event.preventDefault();
+          picker.open = false;
+          summary.focus();
+        }
+      });
+      setColorPickerValue(picker, picker.dataset.colorValue || colors[0].name);
+      setColorPickerDisabled(picker, picker.getAttribute('aria-disabled') === 'true');
+    }
+
+    function chainColorPicker(chain) {
       return chain === 'A' ? els.chainAColor : els.chainBColor;
     }
 
@@ -303,6 +387,7 @@
 
     function renderSequences() {
       if (!state.parsed) {
+        els.sequenceSummary.textContent = '0';
         els.sequencePanel.innerHTML = '<p class="empty">No PDB loaded.</p>';
         return;
       }
@@ -318,10 +403,11 @@
             <td><div class="sequence" title="${escapeHtml(state.parsed.sequences.get(chain))}">${escapeHtml(state.parsed.sequences.get(chain))}</div></td>
           </tr>`);
       }
+      els.sequenceSummary.textContent = String(rows.length);
       els.sequencePanel.innerHTML = `
         <div class="table-wrap">
           <table>
-            <thead><tr><th>chain</th><th>residue_count</th><th>first_residue</th><th>last_residue</th><th>sequence</th></tr></thead>
+            <thead><tr><th>Chain</th><th>Residues</th><th>Start</th><th>End</th><th>Sequence</th></tr></thead>
             <tbody>${rows.join('')}</tbody>
           </table>
         </div>`;
@@ -329,29 +415,35 @@
 
     function renderHotspotTable() {
       const rows = buildHotspotRows();
+      els.hotspotSummary.textContent = String(rows.length);
       if (!rows.length) {
         els.hotspotPanel.innerHTML = '<p class="empty">No hotspots selected.</p>';
         return;
       }
+      const selectedKey = els.selectedHotspot.value;
       els.hotspotPanel.innerHTML = `
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>hotspot</th><th>chain</th><th>residue_number</th><th>residue</th><th>color</th><th>found</th><th>context</th>
+                <th>Residue</th><th>Chain</th><th>Position</th><th>Amino acid</th><th>Color</th><th>In model</th><th>Sequence context</th>
               </tr>
             </thead>
             <tbody>
-              ${rows.map(row => `
-                <tr>
-                  <td>${escapeHtml(row.hotspot)}</td>
+              ${rows.map(row => {
+                const key = hotspotKey({ chain: row.chain, resseq: row.residueNumber });
+                const selected = key === selectedKey;
+                return `
+                <tr class="hotspot-row${selected ? ' is-selected' : ''}">
+                  <td><button class="hotspot-select" type="button" data-hotspot-key="${escapeHtml(key)}" aria-current="${selected ? 'true' : 'false'}" aria-label="Select hotspot ${escapeHtml(row.hotspot)}">${escapeHtml(row.hotspot)}</button></td>
                   <td>${escapeHtml(row.chain)}</td>
                   <td>${row.residueNumber}</td>
                   <td>${escapeHtml(row.resname3)}${row.resname1 ? ` / ${escapeHtml(row.resname1)}` : ''}</td>
                   <td><span class="color-swatch" style="background:${escapeHtml(row.colorHex)}"></span>${escapeHtml(row.colorName)} ${escapeHtml(row.colorHex)}</td>
-                  <td>${row.found ? 'True' : 'False'}</td>
+                  <td><span class="availability${row.found ? '' : ' missing'}">${row.found ? 'Found' : 'Missing'}</span></td>
                   <td><div class="context" title="${escapeHtml(row.context)}">${escapeHtml(row.context)}</div></td>
-                </tr>`).join('')}
+                </tr>`;
+              }).join('')}
             </tbody>
           </table>
         </div>`;
@@ -361,13 +453,19 @@
       const current = els.selectedHotspot.value;
       els.selectedHotspot.innerHTML = '';
       if (!state.hotspots.length) {
+        els.selectedHotspotSection.hidden = true;
         els.selectedHotspot.add(new Option('No hotspots selected', ''));
         els.selectedHotspot.disabled = true;
-        els.selectedColor.disabled = true;
+        setColorPickerDisabled(els.selectedColor, true);
         els.deleteSelected.disabled = true;
-        els.selectedColor.value = DEFAULT_COLOR.name;
+        els.locateHotspot.disabled = true;
+        els.locateNote.hidden = true;
+        setColorPickerValue(els.selectedColor, DEFAULT_COLOR.name);
         return;
       }
+      const wasHidden = els.selectedHotspotSection.hidden;
+      els.selectedHotspotSection.hidden = false;
+      if (wasHidden) els.selectedHotspotSection.open = true;
       const rows = buildHotspotRows();
       for (const hotspot of state.hotspots) {
         const key = hotspotKey(hotspot);
@@ -376,31 +474,43 @@
         els.selectedHotspot.add(new Option(`${residueLabel(hotspot.chain, hotspot.resseq)}${identity} [${hotspot.colorName}]`, key));
       }
       els.selectedHotspot.disabled = false;
-      els.selectedColor.disabled = false;
+      setColorPickerDisabled(els.selectedColor, false);
       els.deleteSelected.disabled = false;
       els.selectedHotspot.value = [...els.selectedHotspot.options].some(option => option.value === current) ? current : els.selectedHotspot.options[0].value;
       const selected = state.hotspots.find(hotspot => hotspotKey(hotspot) === els.selectedHotspot.value);
-      els.selectedColor.value = selected?.colorName || DEFAULT_COLOR.name;
+      setColorPickerValue(els.selectedColor, selected?.colorName || DEFAULT_COLOR.name);
+      updateLocateControl();
+    }
+
+    function updateLocateControl() {
+      const selectedKey = els.selectedHotspot.value;
+      const row = buildHotspotRows().find(item => hotspotKey({ chain: item.chain, resseq: item.residueNumber }) === selectedKey);
+      const canLocate = Boolean(row?.found);
+      els.locateHotspot.disabled = !canLocate;
+      els.locateNote.hidden = !selectedKey || canLocate;
+      els.locateNote.textContent = selectedKey && !canLocate
+        ? 'This residue is not present in the loaded structure.'
+        : '';
     }
 
     function resetChainColors() {
       for (const chain of COLORABLE_CHAINS) {
         state.chainColors[chain] = DEFAULT_CHAIN_COLOR.name;
-        chainColorSelect(chain).value = DEFAULT_CHAIN_COLOR.name;
+        setColorPickerValue(chainColorPicker(chain), DEFAULT_CHAIN_COLOR.name);
       }
     }
 
     function updateChainColorControls() {
       const missing = [];
       for (const chain of COLORABLE_CHAINS) {
-        const select = chainColorSelect(chain);
+        const picker = chainColorPicker(chain);
         const exists = Boolean(state.parsed?.chains.has(chain));
-        select.disabled = !exists;
+        setColorPickerDisabled(picker, !exists);
         if (!exists) {
-          select.value = DEFAULT_CHAIN_COLOR.name;
+          setColorPickerValue(picker, DEFAULT_CHAIN_COLOR.name);
           missing.push(chain);
         } else {
-          select.value = state.chainColors[chain] || DEFAULT_CHAIN_COLOR.name;
+          setColorPickerValue(picker, state.chainColors[chain] || DEFAULT_CHAIN_COLOR.name);
         }
       }
       els.chainColorNote.textContent = missing.length
@@ -409,12 +519,16 @@
     }
 
     function updateChainColor(chain) {
-      const color = chainColorByName(chainColorSelect(chain).value);
+      const color = chainColorByName(colorPickerValue(chainColorPicker(chain)));
       state.chainColors[chain] = color.name;
       renderAll(`Updated chain ${chain} color to ${color.name}.`);
     }
 
-    function renderStructure() {
+    function renderStructure({ preserveView = false } = {}) {
+      let previousView = null;
+      if (preserveView && state.viewer && typeof state.viewer.getView === 'function') {
+        try { previousView = state.viewer.getView(); } catch (error) {}
+      }
       els.viewer.innerHTML = '';
       if (state.viewer) {
         try { state.viewer.clear(); } catch (error) {}
@@ -428,7 +542,7 @@
         els.viewer.innerHTML = '<div class="empty" style="padding: 18px; color: #fecaca;">3Dmol.js is not loaded. Check network access to jsDelivr.</div>';
         return;
       }
-      const viewer = $3Dmol.createViewer(els.viewer, { backgroundColor: '#111817' });
+      const viewer = $3Dmol.createViewer(els.viewer, { backgroundColor: '#071019' });
       state.viewer = viewer;
       viewer.addModel(state.pdbText, 'pdb');
       viewer.setStyle({}, { cartoon: { color: '#cbd5e1' } });
@@ -441,36 +555,73 @@
       for (const row of buildHotspotRows()) {
         if (!row.found) continue;
         const selector = { chain: row.chain, resi: String(row.residueNumber) };
+        const selected = hotspotKey({ chain: row.chain, resseq: row.residueNumber }) === els.selectedHotspot.value;
+        if (selected) {
+          viewer.addStyle(selector, { sphere: { color: '#f1c75b', scale: 0.72, opacity: 0.88 } });
+        }
         viewer.addStyle(selector, { stick: { color: row.colorHex, radius: 0.28 } });
         viewer.addStyle(selector, { sphere: { color: row.colorHex, scale: 0.36 } });
         if (row.coord) {
           viewer.addLabel(row.hotspot, {
             position: row.coord,
-            fontColor: 'black',
-            backgroundColor: 'white',
+            fontColor: selected ? '#182520' : 'black',
+            backgroundColor: selected ? '#f1c75b' : 'white',
             backgroundOpacity: 0.75,
             fontSize: 12,
             inFront: true
           });
         }
       }
-      viewer.zoomTo();
+      if (previousView && typeof viewer.setView === 'function') {
+        viewer.setView(previousView);
+      } else {
+        viewer.zoomTo();
+      }
       viewer.render();
     }
 
-    function renderAll(message, kind = 'ok') {
+    function renderAll(message, kind = 'ok', { preserveView = true } = {}) {
       renderSequences();
       updateChainColorControls();
       updateSelectedControls();
       renderHotspotTable();
-      renderStructure();
+      renderStructure({ preserveView });
       if (message) setStatus(message, kind);
       const pdbName = state.pdbs[state.pdbIndex]?.name || 'No PDB';
       els.viewerTitle.textContent = pdbName;
       els.viewerMeta.textContent = `${state.hotspots.length} hotspot(s), one active 3Dmol viewer`;
     }
 
-    async function loadPdb(index) {
+    function selectHotspot(key) {
+      const optionExists = [...els.selectedHotspot.options].some(option => option.value === key);
+      if (!optionExists) return;
+      const hotspot = state.hotspots.find(item => hotspotKey(item) === key);
+      if (!hotspot) return;
+      const row = buildHotspotRows().find(item => hotspotKey({ chain: item.chain, resseq: item.residueNumber }) === key);
+      els.selectedHotspot.value = key;
+      setColorPickerValue(els.selectedColor, hotspot.colorName);
+      els.selectedHotspotSection.open = true;
+      renderHotspotTable();
+      updateLocateControl();
+      renderStructure({ preserveView: true });
+      setStatus(row?.found ? `Selected ${residueLabel(hotspot.chain, hotspot.resseq)}.` : `${residueLabel(hotspot.chain, hotspot.resseq)} is not present in this structure.`, row?.found ? 'ok' : 'warning');
+    }
+
+    function locateSelectedHotspot() {
+      const key = els.selectedHotspot.value;
+      const row = buildHotspotRows().find(item => hotspotKey({ chain: item.chain, resseq: item.residueNumber }) === key);
+      if (!row?.found || !state.viewer) {
+        updateLocateControl();
+        return;
+      }
+      state.viewer.zoomTo({ chain: row.chain, resi: String(row.residueNumber) }, 450);
+      state.viewer.render();
+      setStatus(`Centered on ${row.hotspot}.`);
+    }
+
+    async function loadPdb(index, { initialLoad = false } = {}) {
+      const requestId = ++state.pdbLoadRequest;
+      const clearedHotspots = state.hotspots.length;
       state.pdbIndex = Number(index) || 0;
       const pdb = state.pdbs[state.pdbIndex];
       if (!pdb) {
@@ -478,24 +629,29 @@
         state.parsed = null;
         state.hotspots = [];
         resetChainColors();
-        renderAll('No PDB selected.', 'warning');
+        renderAll(clearedHotspots ? `No PDB selected. Cleared ${clearedHotspots} hotspot(s).` : 'No PDB selected.', 'warning', { preserveView: false });
         return;
       }
       setStatus(`Loading ${pdb.name}...`);
       try {
-        state.pdbText = await fetchPdbText(pdb);
+        const pdbText = await fetchPdbText(pdb);
+        if (requestId !== state.pdbLoadRequest) return;
+        state.pdbText = pdbText;
         state.parsed = parsePdbText(state.pdbText);
         state.hotspots = [];
         resetChainColors();
         const residueCount = state.parsed.residues.size;
         const chainCount = state.parsed.chains.size;
-        renderAll(`Loaded ${pdb.name}: ${residueCount} residues across ${chainCount} chain(s).`);
+        const resetMessage = !initialLoad && clearedHotspots ? ` Cleared ${clearedHotspots} hotspot(s).` : '';
+        renderAll(`Loaded ${pdb.name}: ${residueCount} residues across ${chainCount} chain(s).${resetMessage}`, 'ok', { preserveView: false });
       } catch (error) {
+        if (requestId !== state.pdbLoadRequest) return;
         state.pdbText = '';
         state.parsed = null;
         state.hotspots = [];
         resetChainColors();
-        renderAll(`Failed to load ${pdb.name}: ${error.message}`, 'error');
+        const resetMessage = !initialLoad && clearedHotspots ? ` Cleared ${clearedHotspots} hotspot(s).` : '';
+        renderAll(`Failed to load ${pdb.name}: ${error.message}.${resetMessage}`, 'error', { preserveView: false });
       }
     }
 
@@ -522,7 +678,7 @@
         return;
       }
       const { matches, invalid } = parseHotspotText(text);
-      const color = colorByName(els.newColor.value);
+      const color = colorByName(colorPickerValue(els.newColor));
       const { added, duplicates } = addParsedHotspots(matches, color);
       if (clearManualInput) els.hotspotInput.value = '';
       const parts = [];
@@ -530,6 +686,7 @@
       if (duplicates) parts.push(`Ignored ${duplicates} duplicate hotspot input(s).`);
       if (invalid.length) parts.push(`Skipped invalid token(s): ${invalid.join(', ')}.`);
       renderAll(parts.length ? parts.join(' ') : 'No valid hotspots were found in the input.', invalid.length ? 'warning' : 'ok');
+      if (added) els.hotspotResultsSection.open = true;
     }
 
     function addHotspots() {
@@ -575,23 +732,17 @@
       const key = els.selectedHotspot.value;
       const hotspot = state.hotspots.find(item => hotspotKey(item) === key);
       if (!hotspot) return;
-      const color = colorByName(els.selectedColor.value);
+      const color = colorByName(colorPickerValue(els.selectedColor));
       hotspot.colorName = color.name;
       hotspot.colorHex = color.hex;
       renderAll(`Updated ${residueLabel(hotspot.chain, hotspot.resseq)} color to ${color.name}.`);
     }
 
     function initOptions() {
-      for (const color of COLORS) {
-        els.newColor.add(new Option(color.name, color.name));
-        els.selectedColor.add(new Option(color.name, color.name));
-      }
-      els.newColor.value = DEFAULT_COLOR.name;
-      els.selectedColor.value = DEFAULT_COLOR.name;
-      for (const color of CHAIN_COLORS) {
-        els.chainAColor.add(new Option(color.name, color.name));
-        els.chainBColor.add(new Option(color.name, color.name));
-      }
+      setupColorPicker(els.newColor, COLORS, () => {});
+      setupColorPicker(els.selectedColor, COLORS, updateSelectedColor);
+      setupColorPicker(els.chainAColor, CHAIN_COLORS, () => updateChainColor('A'));
+      setupColorPicker(els.chainBColor, CHAIN_COLORS, () => updateChainColor('B'));
       resetChainColors();
     }
 
@@ -625,14 +776,15 @@
       els.loadHotspotFile.addEventListener('click', loadHotspotFile);
       els.clearHotspots.addEventListener('click', clearHotspots);
       els.reloadPdb.addEventListener('click', () => loadPdb(state.pdbIndex));
-      els.renderButton.addEventListener('click', () => renderAll('Structure rendered.'));
+      els.renderButton.addEventListener('click', () => renderAll('View reset to the full structure.', 'ok', { preserveView: false }));
       els.deleteSelected.addEventListener('click', deleteSelected);
-      els.selectedColor.addEventListener('change', updateSelectedColor);
-      els.chainAColor.addEventListener('change', () => updateChainColor('A'));
-      els.chainBColor.addEventListener('change', () => updateChainColor('B'));
-      els.selectedHotspot.addEventListener('change', () => {
-        const hotspot = state.hotspots.find(item => hotspotKey(item) === els.selectedHotspot.value);
-        if (hotspot) els.selectedColor.value = hotspot.colorName;
+      els.locateHotspot.addEventListener('click', locateSelectedHotspot);
+      els.selectedHotspot.addEventListener('change', event => {
+        selectHotspot(event.target.value);
+      });
+      els.hotspotPanel.addEventListener('click', event => {
+        const button = event.target.closest('[data-hotspot-key]');
+        if (button) selectHotspot(button.dataset.hotspotKey);
       });
 
       try {
@@ -661,7 +813,7 @@
         renderStructure();
         return;
       }
-      await loadPdb(0);
+      await loadPdb(0, { initialLoad: true });
     }
 
     if (document.readyState === 'loading') {

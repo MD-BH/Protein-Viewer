@@ -11,88 +11,130 @@
 </head>
 <body>
   <main class="shell">
-    <section class="sidebar">
-      <h1>Protein Hotspot Viewer</h1>
+    <aside class="sidebar" aria-label="Viewer controls">
+      <header class="app-head">
+        <p class="kicker">Structural biology workbench</p>
+        <h1>Protein Hotspot Viewer</h1>
+      </header>
 
-      <div class="control-section">
-        <h2>Structure</h2>
-        <label for="pdbSelect">PDB</label>
-        <select id="pdbSelect"></select>
-        <div class="row" style="margin-top: 10px;">
-          <button id="reloadPdb">Reload PDB</button>
-          <button id="renderButton">Render</button>
-        </div>
-      </div>
-
-      <div class="control-section">
-        <h2>Chain Colors</h2>
-        <div class="row">
-          <div>
-            <label for="chainAColor">Chain A color</label>
-            <select id="chainAColor"></select>
+      <details class="control-section" open>
+        <summary>Structure</summary>
+        <div class="section-body">
+          <label for="pdbSelect">PDB structure</label>
+          <select id="pdbSelect"></select>
+          <div class="row action-row">
+            <button id="reloadPdb">Reload PDB</button>
+            <button id="renderButton">Reset view</button>
           </div>
-          <div>
-            <label for="chainBColor">Chain B color</label>
-            <select id="chainBColor"></select>
-          </div>
+          <p class="control-note warning-note">Switching or reloading a PDB clears the current hotspot list.</p>
         </div>
-        <div class="control-note" id="chainColorNote"></div>
-      </div>
+      </details>
 
-      <div class="control-section">
-        <h2>Hotspot Input</h2>
-        <label for="hotspotFileSelect">Hotspot file</label>
-        <div class="row">
-          <select id="hotspotFileSelect"></select>
-          <button id="loadHotspotFile">Load file</button>
-        </div>
-
-        <label for="hotspotInput">Manual hotspots</label>
-        <textarea id="hotspotInput" placeholder="A128, A160&#10;A:164 A 176"></textarea>
-
-        <div class="row">
-          <div>
-            <label for="newColor">Color for new hotspots</label>
-            <select id="newColor"></select>
+      <details class="control-section" open>
+        <summary>Hotspot input</summary>
+        <div class="section-body">
+          <label for="hotspotFileSelect">Import from file</label>
+          <div class="row">
+            <select id="hotspotFileSelect"></select>
+            <button id="loadHotspotFile">Load file</button>
           </div>
-          <div>
-            <label>&nbsp;</label>
+
+          <label for="hotspotInput">Residues</label>
+          <textarea id="hotspotInput" placeholder="A128, A160&#10;A:164 A 176"></textarea>
+
+          <div class="row color-action-row">
+            <div class="color-field">
+              <span class="field-label" id="newColorLabel">Color for new hotspots</span>
+              <details class="color-picker" id="newColor" data-color-value="Red">
+                <summary aria-labelledby="newColorLabel newColorCurrent">
+                  <span class="picker-current-swatch" style="--swatch-color:#FF7185" aria-hidden="true"></span>
+                  <span class="picker-current-name" id="newColorCurrent">Red</span>
+                </summary>
+                <div class="color-options" id="newColorOptions" role="group" aria-labelledby="newColorLabel"></div>
+              </details>
+            </div>
             <button id="addHotspots" class="primary">Add hotspots</button>
           </div>
         </div>
-      </div>
+      </details>
 
-      <div class="control-section">
-        <h2>Selected Hotspot</h2>
-        <label for="selectedHotspot">Hotspot</label>
-        <select id="selectedHotspot"></select>
-        <div class="row">
-          <div>
-            <label for="selectedColor">Selected color</label>
-            <select id="selectedColor"></select>
+      <details class="control-section" id="selectedHotspotSection" hidden>
+        <summary>Selected hotspot</summary>
+        <div class="section-body">
+          <label for="selectedHotspot">Editing</label>
+          <div class="row">
+            <select id="selectedHotspot"></select>
+            <button id="locateHotspot" class="quiet-action">Locate in structure</button>
           </div>
-          <div>
-            <label>&nbsp;</label>
-            <button id="deleteSelected" class="danger">Delete selected</button>
+          <p id="locateNote" class="control-note" hidden></p>
+
+          <div class="row color-action-row selected-actions">
+            <div class="color-field">
+              <span class="field-label" id="selectedColorLabel">Hotspot color</span>
+              <details class="color-picker" id="selectedColor" data-color-value="Red" aria-disabled="true">
+                <summary aria-labelledby="selectedColorLabel selectedColorCurrent" aria-disabled="true" tabindex="-1">
+                  <span class="picker-current-swatch" style="--swatch-color:#FF7185" aria-hidden="true"></span>
+                  <span class="picker-current-name" id="selectedColorCurrent">Red</span>
+                </summary>
+                <div class="color-options" id="selectedColorOptions" role="group" aria-labelledby="selectedColorLabel"></div>
+              </details>
+            </div>
+            <button id="deleteSelected" class="danger">Delete hotspot</button>
           </div>
+          <button id="clearHotspots" class="text-action">Clear all hotspots</button>
         </div>
-        <button id="clearHotspots" style="margin-top: 10px;">Clear all hotspots</button>
-      </div>
+      </details>
 
-      <div class="status" id="status">Loading...</div>
+      <details class="control-section">
+        <summary>Chain colors</summary>
+        <div class="section-body">
+          <div class="row">
+            <div class="color-field">
+              <span class="field-label" id="chainAColorLabel">Chain A</span>
+              <details class="color-picker" id="chainAColor" data-color-value="Gray" aria-disabled="true">
+                <summary aria-labelledby="chainAColorLabel chainAColorCurrent" aria-disabled="true" tabindex="-1">
+                  <span class="picker-current-swatch" style="--swatch-color:#B7C8D6" aria-hidden="true"></span>
+                  <span class="picker-current-name" id="chainAColorCurrent">Gray</span>
+                </summary>
+                <div class="color-options" id="chainAColorOptions" role="group" aria-labelledby="chainAColorLabel"></div>
+              </details>
+            </div>
+            <div class="color-field">
+              <span class="field-label" id="chainBColorLabel">Chain B</span>
+              <details class="color-picker" id="chainBColor" data-color-value="Gray" aria-disabled="true">
+                <summary aria-labelledby="chainBColorLabel chainBColorCurrent" aria-disabled="true" tabindex="-1">
+                  <span class="picker-current-swatch" style="--swatch-color:#B7C8D6" aria-hidden="true"></span>
+                  <span class="picker-current-name" id="chainBColorCurrent">Gray</span>
+                </summary>
+                <div class="color-options" id="chainBColorOptions" role="group" aria-labelledby="chainBColorLabel"></div>
+              </details>
+            </div>
+          </div>
+          <div class="control-note" id="chainColorNote"></div>
+        </div>
+      </details>
 
-      <h2>Chains</h2>
-      <div id="sequencePanel"></div>
+      <div class="status" id="status" role="status" aria-live="polite">Loading structure…</div>
 
-      <h2>Selected Hotspots</h2>
-      <div id="hotspotPanel"></div>
-    </section>
+      <details class="data-section">
+        <summary><span>Chains</span><span id="sequenceSummary" class="summary-count">0</span></summary>
+        <div id="sequencePanel"></div>
+      </details>
 
-    <section class="stage">
-      <div class="viewer-head">
-        <strong id="viewerTitle">Structure</strong>
+      <details class="data-section" id="hotspotResultsSection">
+        <summary><span>Selected hotspots</span><span id="hotspotSummary" class="summary-count">0</span></summary>
+        <div id="hotspotPanel"></div>
+      </details>
+    </aside>
+
+    <section class="stage" aria-label="Protein structure view">
+      <header class="viewer-head">
+        <div>
+          <p class="kicker">Active structure</p>
+          <strong id="viewerTitle">Structure</strong>
+        </div>
         <span id="viewerMeta">One active 3Dmol viewer</span>
-      </div>
+      </header>
       <div id="viewer"></div>
     </section>
   </main>
