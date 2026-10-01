@@ -1,8 +1,0 @@
-version: 1
-ignore:
-  - "hotspot_viewer.html"
-  - "pdbs/*.pdb"
-  - "pdbs/manifest.json"
-  - "hotspots/manifest.json"
-  - "__pycache__/**"
-
