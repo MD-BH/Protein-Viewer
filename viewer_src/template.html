@@ -1,9 +1,18 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark" data-theme-storage-key="protein-viewer-theme">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Protein Hotspot Viewer</title>
+  <script>
+    (() => {
+      const root = document.documentElement;
+      try {
+        const savedTheme = localStorage.getItem(root.dataset.themeStorageKey);
+        if (savedTheme === 'light' || savedTheme === 'dark') root.dataset.theme = savedTheme;
+      } catch {}
+    })();
+  </script>
   <script src="https://cdn.jsdelivr.net/npm/3dmol@2.5.4/build/3Dmol-min.js"></script>
   <style>
 {{VIEWER_STYLES}}
@@ -133,7 +142,19 @@
           <p class="kicker">Active structure</p>
           <strong id="viewerTitle">Structure</strong>
         </div>
-        <span id="viewerMeta">One active 3Dmol viewer</span>
+        <div class="viewer-head-actions">
+          <span id="viewerMeta" class="viewer-meta">One active 3Dmol viewer</span>
+          <button id="themeToggle" class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+            <svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="4"></circle>
+              <path d="M12 2.5v2M12 19.5v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2.5 12h2m15 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"></path>
+            </svg>
+            <svg class="theme-icon theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20.3 15.1A8.5 8.5 0 0 1 8.9 3.7 8.6 8.6 0 1 0 20.3 15.1Z"></path>
+            </svg>
+            <span id="themeToggleLabel">Light mode</span>
+          </button>
+        </div>
       </header>
       <div id="viewer"></div>
     </section>

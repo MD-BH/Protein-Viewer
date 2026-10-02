@@ -72,8 +72,40 @@
       hotspotResultsSection: document.getElementById('hotspotResultsSection'),
       viewer: document.getElementById('viewer'),
       viewerTitle: document.getElementById('viewerTitle'),
-      viewerMeta: document.getElementById('viewerMeta')
+      viewerMeta: document.getElementById('viewerMeta'),
+      themeToggle: document.getElementById('themeToggle'),
+      themeToggleLabel: document.getElementById('themeToggleLabel')
     };
+
+    const THEME_STORAGE_KEY = document.documentElement.dataset.themeStorageKey || 'protein-viewer-theme';
+
+    function currentTheme() {
+      return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+    }
+
+    function updateThemeToggle() {
+      const targetTheme = currentTheme() === 'dark' ? 'light' : 'dark';
+      const action = 'Switch to ' + targetTheme + ' theme';
+      els.themeToggleLabel.textContent = targetTheme[0].toUpperCase() + targetTheme.slice(1) + ' mode';
+      els.themeToggle.setAttribute('aria-label', action);
+      els.themeToggle.title = action;
+    }
+
+    function setTheme(theme) {
+      const nextTheme = theme === 'light' ? 'light' : 'dark';
+      document.documentElement.dataset.theme = nextTheme;
+      try {
+        localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+      } catch {}
+      updateThemeToggle();
+    }
+
+    function initThemeToggle() {
+      updateThemeToggle();
+      els.themeToggle.addEventListener('click', () => {
+        setTheme(currentTheme() === 'dark' ? 'light' : 'dark');
+      });
+    }
 
     function newViewerSessionId() {
       return window.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -770,6 +802,7 @@
     }
 
     async function init() {
+      initThemeToggle();
       initOptions();
       els.pdbSelect.addEventListener('change', event => loadPdb(event.target.value));
       els.addHotspots.addEventListener('click', addHotspots);

@@ -1,9 +1,18 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark" data-theme-storage-key="protein-viewer-theme">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Protein Hotspot Viewer</title>
+  <script>
+    (() => {
+      const root = document.documentElement;
+      try {
+        const savedTheme = localStorage.getItem(root.dataset.themeStorageKey);
+        if (savedTheme === 'light' || savedTheme === 'dark') root.dataset.theme = savedTheme;
+      } catch {}
+    })();
+  </script>
   <script src="https://cdn.jsdelivr.net/npm/3dmol@2.5.4/build/3Dmol-min.js"></script>
   <style>
     :root {
@@ -20,11 +29,62 @@
       --warn: #F2C56B;
       --danger: #FF9AA5;
       --viewer: #071019;
+      --viewer-ink: #E8F0F3;
       --viewer-muted: #A6B6C2;
+      --viewer-control: #0B1723;
+      --viewer-control-border: #344858;
+      --viewer-control-hover: #1B3040;
       --control: #0B1723;
       --control-border: #344858;
       --table-head: #192B3A;
       --selection-soft: #352E1B;
+      --hover-surface: #1B3040;
+      --hover-border: #50697A;
+      --status-warn-surface: #332617;
+      --status-error-surface: #351F27;
+      --danger-hover-surface: #351F27;
+      --danger-border: #74434D;
+      --quiet-border: #2B7778;
+      --table-divider: #243545;
+      --count-surface: #1B3040;
+      --picker-outline: rgba(232,240,243,0.62);
+      --table-swatch-outline: rgba(255,255,255,0.38);
+      --success: #7FD6A4;
+      --stage-border: #1F3343;
+      --panel-shadow: rgba(0,0,0,0.2);
+      --scrollbar-thumb: #43596b;
+    }
+    :root[data-theme="light"] {
+      color-scheme: light;
+      --ink: #1E3035;
+      --muted: #50666B;
+      --line: #BCCBC8;
+      --paper: #EDF1EE;
+      --panel: #F8FAF9;
+      --panel-soft: #E5ECE9;
+      --accent: #006B66;
+      --accent-dark: #005551;
+      --selection: #8A5A00;
+      --warn: #704B0A;
+      --danger: #A12B40;
+      --control: #FCFEFD;
+      --control-border: #AABBB7;
+      --table-head: #DEE8E4;
+      --selection-soft: #F4E9CB;
+      --hover-surface: #E4EEEA;
+      --hover-border: #7B9C94;
+      --status-warn-surface: #F5ECD9;
+      --status-error-surface: #F7E6E9;
+      --danger-hover-surface: #F8E8EB;
+      --danger-border: #C57684;
+      --quiet-border: #7DA49F;
+      --table-divider: #D8E1DE;
+      --count-surface: #E4ECE9;
+      --picker-outline: rgba(30,48,53,0.38);
+      --table-swatch-outline: rgba(30,48,53,0.38);
+      --success: #286B4C;
+      --panel-shadow: rgba(26,49,52,0.09);
+      --scrollbar-thumb: #AABBB7;
     }
     * { box-sizing: border-box; }
     body {
@@ -52,8 +112,8 @@
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 4px;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.2);
-      scrollbar-color: #43596b transparent;
+      box-shadow: 0 8px 24px var(--panel-shadow);
+      scrollbar-color: var(--scrollbar-thumb) transparent;
       scrollbar-width: thin;
     }
     .app-head {
@@ -163,7 +223,7 @@
       width: 14px;
       height: 14px;
       flex: 0 0 14px;
-      border: 1px solid rgba(232,240,243,0.62);
+      border: 1px solid var(--picker-outline);
       border-radius: 50%;
       background: var(--swatch-color);
     }
@@ -192,10 +252,10 @@
       text-align: left;
       font-size: 11px;
     }
-    button.color-option:hover:not(:disabled) { border-color: #50697A; background: #1B3040; color: var(--ink); }
+    button.color-option:hover:not(:disabled) { border-color: var(--hover-border); background: var(--hover-surface); color: var(--ink); }
     button.color-option[aria-pressed="true"] {
       border-color: var(--accent);
-      background: #1B3040;
+      background: var(--hover-surface);
       color: var(--ink);
     }
     .color-option-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -215,7 +275,7 @@
       font-weight: 700;
       transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
     }
-    button:hover:not(:disabled) { border-color: #50697A; background: #1B3040; }
+    button:hover:not(:disabled) { border-color: var(--hover-border); background: var(--hover-surface); }
     button.primary {
       border-color: var(--accent);
       background: var(--accent);
@@ -226,12 +286,12 @@
       background: var(--accent-dark);
     }
     button.danger {
-      border-color: #74434D;
+      border-color: var(--danger-border);
       color: var(--danger);
     }
-    button.danger:hover:not(:disabled) { border-color: var(--danger); background: #351F27; }
+    button.danger:hover:not(:disabled) { border-color: var(--danger); background: var(--danger-hover-surface); }
     button.quiet-action {
-      border-color: #2B7778;
+      border-color: var(--quiet-border);
       color: var(--accent);
     }
     button.text-action {
@@ -278,8 +338,8 @@
       font-size: 12px;
       line-height: 1.45;
     }
-    .status.warn { border-color: var(--warn); background: #332617; color: var(--warn); }
-    .status.error { border-color: var(--danger); background: #351F27; color: var(--danger); }
+    .status.warn { border-color: var(--warn); background: var(--status-warn-surface); color: var(--warn); }
+    .status.error { border-color: var(--danger); background: var(--status-error-surface); color: var(--danger); }
     .data-section { border-top: 1px solid var(--line); }
     .data-section > summary {
       min-height: 41px;
@@ -298,7 +358,7 @@
       margin-left: auto;
       padding: 2px 7px;
       border-radius: 10px;
-      background: #1B3040;
+      background: var(--count-surface);
       color: var(--muted);
       font-size: 11px;
       font-variant-numeric: tabular-nums;
@@ -318,7 +378,7 @@
     }
     th, td {
       padding: 7px 8px;
-      border-bottom: 1px solid #243545;
+      border-bottom: 1px solid var(--table-divider);
       text-align: left;
       vertical-align: top;
       white-space: nowrap;
@@ -356,11 +416,11 @@
       width: 10px;
       height: 10px;
       margin-right: 5px;
-      border: 1px solid rgba(255,255,255,0.38);
+      border: 1px solid var(--table-swatch-outline);
       border-radius: 50%;
       vertical-align: -1px;
     }
-    .availability { color: #7FD6A4; }
+    .availability { color: var(--success); }
     .availability.missing { color: var(--warn); }
     .empty {
       margin: 0 0 12px;
@@ -375,21 +435,52 @@
       height: calc(100vh - 28px);
       min-height: 520px;
       padding: 15px;
-      border: 1px solid #1F3343;
+      border: 1px solid var(--stage-border);
       border-radius: 4px;
       background: var(--viewer);
     }
     .viewer-head {
       display: flex;
-      align-items: end;
+      align-items: center;
       justify-content: space-between;
       gap: 12px;
       padding: 1px 2px 13px;
-      color: var(--ink);
+      color: var(--viewer-ink);
     }
     .viewer-head .kicker { color: var(--viewer-muted); }
     .viewer-head strong { font-family: "Palatino Linotype", "Book Antiqua", Georgia, serif; font-size: 20px; font-weight: 600; }
-    .viewer-head span { color: var(--viewer-muted); font-size: 12px; text-align: right; }
+    .viewer-head-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 12px;
+      min-width: 0;
+    }
+    .viewer-meta { color: var(--viewer-muted); font-size: 12px; text-align: right; }
+    button.theme-toggle {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      width: auto;
+      min-height: 34px;
+      padding: 6px 9px;
+      border-color: var(--viewer-control-border);
+      background: var(--viewer-control);
+      color: var(--viewer-ink);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    button.theme-toggle:hover:not(:disabled) {
+      border-color: #50697A;
+      background: var(--viewer-control-hover);
+      color: var(--viewer-ink);
+    }
+    button.theme-toggle:focus-visible { outline-color: #42D6CF; }
+    .theme-icon { width: 15px; height: 15px; flex: 0 0 15px; }
+    .theme-icon-moon { display: none; }
+    :root[data-theme="light"] .theme-icon-sun { display: none; }
+    :root[data-theme="light"] .theme-icon-moon { display: block; }
     #viewer {
       position: relative;
       width: 100%;
@@ -410,8 +501,10 @@
       .shell { grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 10px; }
       .sidebar { position: static; max-height: none; padding: 15px; }
       .stage { position: static; height: min(72vh, 640px); min-height: 400px; padding: 10px; }
+      .viewer-head { align-items: flex-start; flex-wrap: wrap; }
+      .viewer-head-actions { width: 100%; justify-content: space-between; }
+      .viewer-meta { max-width: 45%; text-align: left; }
       .viewer-head strong { font-size: 18px; }
-      .viewer-head span { max-width: 45%; }
     }
     @media (max-width: 420px) {
       .shell { padding: 7px; }
@@ -548,7 +641,19 @@
           <p class="kicker">Active structure</p>
           <strong id="viewerTitle">Structure</strong>
         </div>
-        <span id="viewerMeta">One active 3Dmol viewer</span>
+        <div class="viewer-head-actions">
+          <span id="viewerMeta" class="viewer-meta">One active 3Dmol viewer</span>
+          <button id="themeToggle" class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+            <svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="4"></circle>
+              <path d="M12 2.5v2M12 19.5v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2.5 12h2m15 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"></path>
+            </svg>
+            <svg class="theme-icon theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20.3 15.1A8.5 8.5 0 0 1 8.9 3.7 8.6 8.6 0 1 0 20.3 15.1Z"></path>
+            </svg>
+            <span id="themeToggleLabel">Light mode</span>
+          </button>
+        </div>
       </header>
       <div id="viewer"></div>
     </section>
@@ -629,8 +734,40 @@
       hotspotResultsSection: document.getElementById('hotspotResultsSection'),
       viewer: document.getElementById('viewer'),
       viewerTitle: document.getElementById('viewerTitle'),
-      viewerMeta: document.getElementById('viewerMeta')
+      viewerMeta: document.getElementById('viewerMeta'),
+      themeToggle: document.getElementById('themeToggle'),
+      themeToggleLabel: document.getElementById('themeToggleLabel')
     };
+
+    const THEME_STORAGE_KEY = document.documentElement.dataset.themeStorageKey || 'protein-viewer-theme';
+
+    function currentTheme() {
+      return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+    }
+
+    function updateThemeToggle() {
+      const targetTheme = currentTheme() === 'dark' ? 'light' : 'dark';
+      const action = 'Switch to ' + targetTheme + ' theme';
+      els.themeToggleLabel.textContent = targetTheme[0].toUpperCase() + targetTheme.slice(1) + ' mode';
+      els.themeToggle.setAttribute('aria-label', action);
+      els.themeToggle.title = action;
+    }
+
+    function setTheme(theme) {
+      const nextTheme = theme === 'light' ? 'light' : 'dark';
+      document.documentElement.dataset.theme = nextTheme;
+      try {
+        localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+      } catch {}
+      updateThemeToggle();
+    }
+
+    function initThemeToggle() {
+      updateThemeToggle();
+      els.themeToggle.addEventListener('click', () => {
+        setTheme(currentTheme() === 'dark' ? 'light' : 'dark');
+      });
+    }
 
     function newViewerSessionId() {
       return window.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -1327,6 +1464,7 @@
     }
 
     async function init() {
+      initThemeToggle();
       initOptions();
       els.pdbSelect.addEventListener('change', event => loadPdb(event.target.value));
       els.addHotspots.addEventListener('click', addHotspots);
