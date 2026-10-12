@@ -133,6 +133,25 @@ GIF export includes both currently visible structures and the reference labels.
 Loading or alignment disables export; exporting locks comparison controls. Files
 continue to use the reference PDB name. No runtime dependencies are added.
 
+## Canvas screenshots
+
+Click **Canvas screenshot → Save screenshot** to save the current pose as a
+lossless PNG in `screenshots/`. The folder is created on first save and ignored
+by Git. The page shows a link to the saved file, named after the reference PDB
+with a timestamp and unique suffix; repeated captures never overwrite files.
+
+Screenshots use the canvas's actual pixel dimensions (including display pixel
+density), its current theme background, visible structures, hotspots, highlights,
+and custom labels with leader lines. Sidebars, buttons and the DOM legend are
+excluded. No camera, zoom or background settings are changed. After the pixels
+are captured you can continue editing while encoding and saving finish; those
+edits do not change the captured image.
+
+Screenshot and GIF export are mutually exclusive. Screenshots are unavailable
+while a structure loads, alignment or a locate animation runs, or no structure
+is visible. Saving requires the project's Python server and has a 64 MiB limit.
+Errors restore the button without changing your current view.
+
 ## Rotation GIF export
 
 Start the viewer with `python build_viewer.py`, arrange the view and hotspots,
@@ -195,6 +214,7 @@ its Chromium browser, and Pillow):
 ```bash
 python tests/verify_gif_browser.py
 python tests/verify_comparison_browser.py
+python tests/verify_screenshot_browser.py
 ```
 
 This builds the page, saves white- and dark-background sample GIFs in `gifs/`,

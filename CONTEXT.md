@@ -21,6 +21,12 @@ dark background chosen independently of the page theme. It preserves the current
 framing and excludes the surrounding page controls.
 _Avoid_: Screen recording
 
+**Canvas screenshot**: A still image of the current visible protein view, including
+hotspots, highlights, labels and leader lines. It preserves the current pose,
+background and canvas pixel dimensions, and excludes surrounding page controls.
+
+_Avoid_: Full-page screenshot
+
 ## Annotations
 
 **Hotspot leader-line annotation**: A hotspot name placed toward the outside of

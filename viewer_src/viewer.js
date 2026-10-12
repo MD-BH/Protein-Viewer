@@ -36,6 +36,7 @@
       labelBoxes: [],
       redrawLabels: null,
       labelBackground: null,
+      screenshotBusy: false,
       gifExportBusy: false
     };
 
@@ -224,9 +225,57 @@
         el.addEventListener('change', () => { renderStructure({ preserveView: true }); updateLocateControl(); });
     }
 
+    const screenshotEls = Object.fromEntries(['saveScreenshot', 'screenshotStatus', 'screenshotResult']
+      .map(id => [id, document.getElementById(id)]));
+
+    async function saveScreenshot() {
+      updateGifAvailability();
+      if (screenshotEls.saveScreenshot.disabled) return;
+      const viewer = state.viewer;
+      const pdbName = state.pdbs[state.pdbIndex].name;
+      const canvas = document.createElement('canvas');
+      state.screenshotBusy = true;
+      updateGifAvailability();
+      screenshotEls.screenshotResult.hidden = true;
+      screenshotEls.screenshotStatus.textContent = 'Capturing PNG…';
+      try {
+        // Copy both layers synchronously: later edits cannot change this snapshot.
+        viewer.render();
+        const source = viewer.getCanvas();
+        canvas.width = source.width;
+        canvas.height = source.height;
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('Could not create a capture canvas.');
+        context.drawImage(source, 0, 0);
+        context.drawImage(els.hotspotLabels, 0, 0);
+        const blob = await new Promise((resolve, reject) => {
+          canvas.toBlob(result => result ? resolve(result) : reject(new Error('PNG encoding failed.')), 'image/png');
+        });
+        if (blob.size > 64 * 1024 * 1024) throw new Error('PNG exceeds 64 MiB. Try a smaller viewer window.');
+        screenshotEls.screenshotStatus.textContent = 'Saving to screenshots/…';
+        const response = await fetch(`/__viewer/export-screenshot?pdb=${encodeURIComponent(pdbName)}`, {
+          method: 'POST', headers: { 'Content-Type': 'image/png' }, body: blob,
+          signal: AbortSignal.timeout(60000)
+        });
+        if (!response.ok) throw new Error(`Save failed (HTTP ${response.status}). Check screenshots/ permissions.`);
+        const result = await response.json();
+        screenshotEls.screenshotResult.href = result.path;
+        screenshotEls.screenshotResult.textContent = result.path;
+        screenshotEls.screenshotResult.hidden = false;
+        screenshotEls.screenshotStatus.textContent = 'Screenshot saved. Open the file below to view it.';
+      } catch (error) {
+        screenshotEls.screenshotStatus.textContent = `Screenshot failed: ${error.message}`;
+      } finally {
+        canvas.width = canvas.height = 0;
+        state.screenshotBusy = false;
+        updateGifAvailability();
+      }
+    }
+
     function updateGifAvailability() {
-      gifEls.exportGif.disabled = state.gifExportBusy || state.pendingLoads > 0 || state.comparison.busy || !state.viewer ||
+      gifEls.exportGif.disabled = state.gifExportBusy || state.screenshotBusy || state.pendingLoads > 0 || state.comparison.busy || !state.viewer ||
         (!comparisonEls.showReference.checked && !(state.comparison.result && comparisonEls.showComparison.checked));
+      screenshotEls.saveScreenshot.disabled = gifEls.exportGif.disabled || Boolean(state.viewer?.isAnimated());
       updateComparisonControls();
     }
 
@@ -267,7 +316,7 @@
     }
 
     async function exportRotationGif() {
-      if (state.gifExportBusy) return;
+      if (state.gifExportBusy || state.screenshotBusy) return;
       const viewer = state.viewer;
       if (!viewer || state.pendingLoads || state.comparison.busy || viewer.isAnimated()) {
         gifEls.gifStatus.textContent = 'Wait for the structure to finish loading or moving, then export.';
@@ -1053,6 +1102,7 @@
 
     function renderStructure({ preserveView = false, rows = buildHotspotRows() } = {}) {
       gifEls.exportGif.disabled = true;
+      screenshotEls.saveScreenshot.disabled = true;
       let previousView = null;
       if (preserveView && state.viewer && typeof state.viewer.getView === 'function') {
         try { previousView = state.viewer.getView(); } catch (error) {}
@@ -1160,6 +1210,11 @@
         return;
       }
       state.viewer.zoomTo({ model: 0, chain: row.chain, resi: String(row.residueNumber) }, 450);
+      const updateAfterAnimation = () => {
+        updateGifAvailability();
+        if (state.viewer?.isAnimated()) requestAnimationFrame(updateAfterAnimation);
+      };
+      updateAfterAnimation();
       state.viewer.render();
       setStatus(`Centered on ${row.hotspot}.`);
     }
@@ -1330,6 +1385,7 @@
 
     async function init() {
       gifEls.exportGif.addEventListener('click', exportRotationGif);
+      screenshotEls.saveScreenshot.addEventListener('click', saveScreenshot);
       initThemeToggle();
       initLabelEditing();
       initComparison();

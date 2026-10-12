@@ -514,3 +514,6 @@
 
     .label-pin { display: flex; align-items: center; gap: 8px; }
     .label-pin input { width: auto; }
+
+    #screenshotResult { overflow-wrap: anywhere; color: inherit; }
+    #screenshotResult[hidden] { display: none; }

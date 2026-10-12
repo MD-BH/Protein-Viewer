@@ -32,7 +32,7 @@ DEFAULT_PORT = 8766
 VIEWER_HEARTBEAT_TIMEOUT = 60
 VIEWER_CLOSE_GRACE = 15
 VIEWER_SESSION_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,80}\Z")
-MAX_GIF_BYTES = 64 * 1024 * 1024
+MAX_EXPORT_BYTES = 64 * 1024 * 1024
 
 
 def read_source(path: Path) -> str:
@@ -193,8 +193,8 @@ class ViewerRequestHandler(http.server.SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_POST(self) -> None:
-        if urlsplit(self.path).path == "/__viewer/export-gif":
-            self.export_gif()
+        if urlsplit(self.path).path in ("/__viewer/export-gif", "/__viewer/export-screenshot"):
+            self.export_image("gif" if urlsplit(self.path).path.endswith("export-gif") else "png")
             return
         if urlsplit(self.path).path != "/__viewer/close":
             self.send_error(404, "Not found")
@@ -218,9 +218,11 @@ class ViewerRequestHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
 
-    def export_gif(self) -> None:
+    def export_image(self, image_format: str) -> None:
+        label = image_format.upper()
+        directory = "gifs" if image_format == "gif" else "screenshots"
         if not self._is_same_origin_request():
-            self.send_error(403, "GIF exports are same-origin only")
+            self.send_error(403, f"{label} exports are same-origin only")
             return
         names = parse_qs(urlsplit(self.path).query).get("pdb", [])
         root = Path(self.directory)
@@ -229,39 +231,47 @@ class ViewerRequestHandler(http.server.SimpleHTTPRequestHandler):
                 or not (root / "pdbs" / names[0]).is_file()):
             self.send_error(400, "Invalid PDB filename")
             return
-        if self.headers.get_content_type() != "image/gif":
-            self.send_error(415, "Expected image/gif")
+        if self.headers.get_content_type() != f"image/{image_format}":
+            self.send_error(415, f"Expected image/{image_format}")
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             length = 0
         if self.headers.get("Transfer-Encoding") or length < 14:
-            self.send_error(400, "Invalid GIF content length")
+            self.send_error(400, f"Invalid {label} content length")
             return
-        if length > MAX_GIF_BYTES:
-            self.send_error(413, "GIF exceeds 64 MiB")
+        if length > MAX_EXPORT_BYTES:
+            self.send_error(413, f"{label} exceeds 64 MiB")
             return
         self.connection.settimeout(30)
         try:
             data = self.rfile.read(length)
         except (OSError, TimeoutError):
-            self.send_error(408, "GIF upload timed out")
+            self.send_error(408, f"{label} upload timed out")
             return
-        if (len(data) != length or data[:6] not in (b"GIF87a", b"GIF89a")
-                or not int.from_bytes(data[6:8], "little")
-                or not int.from_bytes(data[8:10], "little")):
-            self.send_error(400, "Invalid GIF data")
+        if image_format == "gif":
+            valid = (data[:6] in (b"GIF87a", b"GIF89a")
+                     and int.from_bytes(data[6:8], "little") > 0
+                     and int.from_bytes(data[8:10], "little") > 0)
+        else:
+            valid = (len(data) >= 45 and data[:8] == b"\x89PNG\r\n\x1a\n"
+                     and data[8:16] == b"\x00\x00\x00\x0dIHDR"
+                     and int.from_bytes(data[16:20], "big") > 0
+                     and int.from_bytes(data[20:24], "big") > 0
+                     and data[-12:] == b"\x00\x00\x00\x00IEND\xaeB`\x82")
+        if len(data) != length or not valid:
+            self.send_error(400, f"Invalid {label} data")
             return
         # Only the server chooses the destination; concurrent exports never overwrite.
         stem = re.sub(r"[^A-Za-z0-9_.-]", "_", Path(names[0]).stem)[:80]
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-        folder = root / "gifs"
-        target = folder / f"{stem}-{stamp}-{uuid.uuid4().hex}.gif"
+        folder = root / directory
+        target = folder / f"{stem}-{stamp}-{uuid.uuid4().hex}.{image_format}"
         created = False
         try:
             if folder.is_symlink():
-                raise OSError("GIF directory must be inside the project")
+                raise OSError(f"{label} directory must be inside the project")
             folder.mkdir(exist_ok=True)
             with target.open("xb") as output:
                 created = True
@@ -269,9 +279,9 @@ class ViewerRequestHandler(http.server.SimpleHTTPRequestHandler):
         except OSError:
             if created:
                 target.unlink(missing_ok=True)
-            self.send_error(500, "Could not save GIF; check the project's gifs directory permissions")
+            self.send_error(500, f"Could not save {label}; check the project's {directory} directory permissions")
             return
-        body = json.dumps({"path": f"gifs/{target.name}"}).encode("utf-8")
+        body = json.dumps({"path": f"{directory}/{target.name}"}).encode("utf-8")
         self.send_response(201)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))

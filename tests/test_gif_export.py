@@ -17,7 +17,12 @@ from test_build_viewer import builder
 GIF = base64.b64decode('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==')
 
 
-class GifExportTests(unittest.TestCase):
+class ImageExportTests:
+    FORMAT = 'gif'
+    FOLDER = 'gifs'
+    ENDPOINT = 'export-gif'
+    PAYLOAD = GIF
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -35,12 +40,12 @@ class GifExportTests(unittest.TestCase):
         self.thread.join()
         self.server.server_close()
 
-    def export(self, body=GIF, pdb='5W78.pdb', headers=None):
-        request_headers = {'Origin': self.base, 'Content-Type': 'image/gif'}
+    def export(self, body=None, pdb='5W78.pdb', headers=None):
+        request_headers = {'Origin': self.base, 'Content-Type': f'image/{self.FORMAT}'}
         request_headers.update(headers or {})
         return urlopen(Request(
-            f'{self.base}/__viewer/export-gif?pdb={quote(pdb)}',
-            data=body, headers=request_headers, method='POST',
+            f'{self.base}/__viewer/{self.ENDPOINT}?pdb={quote(pdb)}',
+            data=self.PAYLOAD if body is None else body, headers=request_headers, method='POST',
         ), timeout=5)
 
     def assert_rejected(self, status, **kwargs):
@@ -48,19 +53,19 @@ class GifExportTests(unittest.TestCase):
             self.export(**kwargs)
         self.assertEqual(error.exception.code, status)
         error.exception.close()
-        self.assertFalse(list(self.root.glob('gifs/*.gif')))
+        self.assertFalse(list(self.root.glob(f'{self.FOLDER}/*.{self.FORMAT}')))
 
     def test_creates_directory_saves_and_serves_unique_gifs(self):
-        self.assertFalse((self.root / 'gifs').exists())
+        self.assertFalse((self.root / self.FOLDER).exists())
         paths = []
         for _ in range(2):
             with self.export() as response:
                 self.assertEqual(response.status, 201)
                 path = json.load(response)['path']
-            self.assertRegex(path, r'^gifs/5W78-\d{8}-\d{6}-[0-9a-f]{32}\.gif$')
-            self.assertEqual((self.root / path).read_bytes(), GIF)
+            self.assertRegex(path, rf'^{self.FOLDER}/5W78-\d{{8}}-\d{{6}}-[0-9a-f]{{32}}\.{self.FORMAT}$')
+            self.assertEqual((self.root / path).read_bytes(), self.PAYLOAD)
             with urlopen(f'{self.base}/{path}') as response:
-                self.assertEqual(response.read(), GIF)
+                self.assertEqual(response.read(), self.PAYLOAD)
             paths.append(path)
         self.assertNotEqual(*paths)
 
@@ -79,17 +84,12 @@ class GifExportTests(unittest.TestCase):
         self.assert_rejected(400, body=b'GIF89a' + b'\0' * 7 + b';')
 
     def test_rejects_invalid_or_excessive_lengths_before_reading_body(self):
-        for length, status in [('no', 400), ('0', 400), ('-1', 400), (str(builder.MAX_GIF_BYTES + 1), 413)]:
+        for length, status in [('no', 400), ('0', 400), ('-1', 400), (str(builder.MAX_EXPORT_BYTES + 1), 413)]:
             with self.subTest(length=length):
                 self.assert_rejected(status, headers={'Content-Length': length})
 
-    def test_accepts_encoder_padding_after_gif_trailer(self):
-        # gif.js writes a padded final block; image decoders ignore bytes after ';'.
-        with self.export(body=GIF + b'\0' * 64) as response:
-            self.assertEqual(response.status, 201)
-
     def test_reports_directory_failure(self):
-        (self.root / 'gifs').write_text('not a directory')
+        (self.root / self.FOLDER).write_text('not a directory')
         self.assert_rejected(500)
 
     def test_cleans_up_partial_write(self):
@@ -112,6 +112,29 @@ class GifExportTests(unittest.TestCase):
 
     def test_rejects_gifs_directory_symlink(self):
         with tempfile.TemporaryDirectory() as outside:
-            (self.root / 'gifs').symlink_to(outside, target_is_directory=True)
+            (self.root / self.FOLDER).symlink_to(outside, target_is_directory=True)
             self.assert_rejected(500)
             self.assertEqual(list(Path(outside).iterdir()), [])
+
+
+class GifExportTests(ImageExportTests, unittest.TestCase):
+    def test_accepts_encoder_padding_after_gif_trailer(self):
+        # gif.js writes a padded final block; image decoders ignore bytes after ';'.
+        with self.export(body=GIF + b'\0' * 64) as response:
+            self.assertEqual(response.status, 201)
+
+
+class ScreenshotExportTests(ImageExportTests, unittest.TestCase):
+    FORMAT = 'png'
+    FOLDER = 'screenshots'
+    ENDPOINT = 'export-screenshot'
+    PAYLOAD = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aO1sAAAAASUVORK5CYII=')
+
+    def test_rejects_invalid_content(self):
+        self.assert_rejected(415, headers={'Content-Type': 'image/gif'})
+        for body in (GIF, b'not a PNG' * 8, self.PAYLOAD[:20],
+                     self.PAYLOAD[:-12], self.PAYLOAD[:16] + b'\0' * 4 + self.PAYLOAD[20:],
+                     self.PAYLOAD[:20] + b'\0' * 4 + self.PAYLOAD[24:],
+                     self.PAYLOAD[:12] + b'JUNK' + self.PAYLOAD[16:]):
+            with self.subTest(body=body[:24]):
+                self.assert_rejected(400, body=body)
