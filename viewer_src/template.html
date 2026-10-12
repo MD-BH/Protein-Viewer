@@ -76,6 +76,10 @@
             <select id="selectedHotspot"></select>
             <button id="locateHotspot" class="quiet-action">Locate in structure</button>
           </div>
+          <label for="labelText">Label text</label>
+          <input id="labelText" type="text" maxlength="80" autocomplete="off">
+          <label class="label-pin"><input id="labelPinned" type="checkbox"> Fixed position</label>
+          <p class="control-note">Drag a label to pin it. Clear text to restore its residue number.</p>
           <p id="locateNote" class="control-note" hidden></p>
 
           <div class="row color-action-row selected-actions">
@@ -181,7 +185,10 @@
           </button>
         </div>
       </header>
-      <div id="viewer"></div>
+      <div class="viewer-viewport">
+        <div id="viewer"></div>
+        <canvas id="hotspotLabels" aria-hidden="true"></canvas>
+      </div>
     </section>
   </main>
 

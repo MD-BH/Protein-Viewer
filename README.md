@@ -99,8 +99,18 @@ local PDB and TXT files are not reliable from `file://`.
 ## Rotation GIF export
 
 Start the viewer with `python build_viewer.py`, arrange the view and hotspots,
-then use **Rotation GIF → Export GIF**. The export captures only the 3D canvas,
-including its background, chain colors, hotspots, labels and selected highlight.
+then use **Rotation GIF → Export GIF**. The export captures the structure view without page controls,
+including chain colors, hotspots, leader-line labels and selected highlight.
+Labels sit outside the structure where space allows, with thin lines pointing to
+their hotspots. They follow rotation and zoom without changing the framing.
+Drag a label to pin it at a position in the canvas; the leader line still follows
+its hotspot. In **Selected hotspot**, edit **Label text** (single line, up to 80
+characters) or uncheck **Fixed position** to return to automatic layout. Blank
+text restores the residue number. Long labels are shortened with an ellipsis.
+Pinned labels may overlap; automatic labels avoid them. Label settings are included
+in GIFs and last until the hotspot is deleted, cleared, or its PDB/page is reloaded.
+Off-screen hotspots are not labeled; crowded views prioritize the selected
+hotspot and omit labels that cannot fit. Lines adapt to the page or GIF background.
 It starts from the current angle, rotates once around the screen's vertical axis,
 and loops forever. Zoom and framing stay as they are; anything outside the view
 is cropped during rotation.

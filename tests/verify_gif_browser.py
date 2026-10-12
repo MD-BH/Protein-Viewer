@@ -20,6 +20,38 @@ def canvas_background(page):
     }""")
 
 
+def check_labels(page):
+    return page.evaluate("""() => {
+      const ctx = els.hotspotLabels.getContext('2d');
+      const calls = {boxes: [], anchors: [], texts: []};
+      const originals = {};
+      for (const [method, key] of [['fillRect', 'boxes'], ['moveTo', 'anchors'], ['fillText', 'texts']]) {
+        originals[method] = ctx[method];
+        ctx[method] = function (...args) { calls[key].push(args); return originals[method].apply(this, args); };
+      }
+      try { state.viewer.render(); } finally { Object.assign(ctx, originals); }
+      const rect = state.viewer.getCanvas().getBoundingClientRect();
+      const expected = buildHotspotRows().filter(r => r.found && r.coord).map(r => {
+        const p = state.viewer.modelToScreen(r.coord);
+        return [p.x - rect.left - scrollX, p.y - rect.top - scrollY];
+      }).filter(([x, y]) => x >= 0 && x <= rect.width && y >= 0 && y <= rect.height);
+      if (!calls.texts.length) throw new Error('Missing hotspot labels');
+      for (const [x, y] of calls.anchors) {
+        if (!expected.some(([ex, ey]) => Math.abs(ex-x) < 0.01 && Math.abs(ey-y) < 0.01))
+          throw new Error('Leader line misses hotspot');
+      }
+      for (const [i, a] of calls.boxes.entries()) {
+        if (a[0] < 0 || a[1] < 0 || a[0]+a[2] > rect.width || a[1]+a[3] > rect.height)
+          throw new Error('Label outside viewport');
+        for (const b of calls.boxes.slice(i+1)) {
+          if (a[0] < b[0]+b[2] && a[0]+a[2] > b[0] && a[1] < b[1]+b[3] && a[1]+a[3] > b[1])
+            throw new Error('Overlapping labels');
+        }
+      }
+      return calls;
+    }""")
+
+
 def main():
     b.build_files()
     server = b.create_viewer_server('127.0.0.1', 0, b.ROOT, b.ViewerSessions())
@@ -93,6 +125,50 @@ def main():
       }
     };
   }""")
+            check_labels(page)
+            assert page.locator('#hotspotLabels').evaluate("e => getComputedStyle(e).pointerEvents") == 'none'
+            # Dense labels, overflow, selected-label priority, scroll and DPR alignment.
+            page.evaluate("window.savedHotspots = state.hotspots.slice()")
+            page.evaluate("""() => {
+              state.hotspots = [...state.parsed.residues.values()].filter(r => !r.icode).slice(0, 100)
+                .map(r => ({chain:r.chain, resseq:r.resseq, colorName:'Red', colorHex:'#FF7185'}));
+              renderAll('Dense label check');
+            }""")
+            check_labels(page)
+            page.evaluate("state.viewer.rotate(80, 'vy'); window.scrollTo(0, 200)")
+            check_labels(page)
+            page.screenshot(path='/tmp/protein-viewer-leader-labels.png')
+            page.evaluate("state.hotspots = window.savedHotspots; renderAll('Restore hotspots'); window.scrollTo(0, 0)")
+            check_labels(page)
+            # Real pointer drag pins the label without rotating the protein.
+            box = page.evaluate('state.labelBoxes[0]')
+            canvas_rect = page.locator('#hotspotLabels').bounding_box()
+            drag_view = page.evaluate('state.viewer.getView()')
+            x, y = canvas_rect['x'] + box['x'] + 5, canvas_rect['y'] + box['y'] + 5
+            page.mouse.move(x, y)
+            page.mouse.down()
+            page.mouse.move(x - 70, y + 40, steps=6)
+            page.mouse.up()
+            assert page.evaluate('state.viewer.getView()') == drag_view
+            assert page.locator('#labelPinned').is_checked()
+            pinned = page.evaluate('({...selectedLabelHotspot().labelPosition})')
+            initial_box = page.evaluate('state.labelBoxes.find(b => b.selected)')
+            page.evaluate("state.viewer.rotate(15, 'vy')")
+            rotated_box = page.evaluate('state.labelBoxes.find(b => b.selected)')
+            assert abs(initial_box['x'] - rotated_box['x']) < 0.01
+            assert abs(initial_box['y'] - rotated_box['y']) < 0.01
+            page.locator('#labelText').fill('活性位点 <A128> & test')
+            assert page.evaluate('state.labelBoxes.find(b => b.selected).text') == '活性位点 <A128> & test'
+            page.locator('#labelText').fill('X' * 80)
+            assert page.evaluate("state.labelBoxes.find(b => b.selected).text.endsWith('…')")
+            assert len(page.locator('#labelText').input_value()) == 80
+            page.locator('#labelText').fill('   ')
+            assert page.evaluate('state.labelBoxes.find(b => b.selected).text') == box['text']
+            page.locator('#labelPinned').uncheck()
+            assert page.evaluate('!selectedLabelHotspot().labelPosition')
+            page.locator('#labelPinned').check()
+            page.locator('#labelText').fill('Active site A128')
+            label_settings = page.evaluate('({text:selectedLabelHotspot().labelText, pos:selectedLabelHotspot().labelPosition})')
             before = page.evaluate('state.viewer.getView()')
             assert canvas_background(page) == [255, 255, 255]
             page.evaluate('window.viewerBeforeTheme = state.viewer')
@@ -116,15 +192,19 @@ def main():
             frames = []
             duration = 0
             pink_pixels = 0
+            label_pixels = 0
             for i in range(image.n_frames):
                 image.seek(i)
                 duration += image.info['duration']
                 rgb = image.convert('RGB')
                 # The source is exactly white; GIF palette quantization can shift it by one level.
                 assert all(channel >= 254 for channel in rgb.getpixel((0, 0)))
+                label_pixels += sum(count for count, (r, g, b_) in rgb.getcolors(image.width * image.height)
+                                    if r > 180 and g > 140 and r > b_ + 60 and g > b_ + 30)
                 frames.append(hashlib.sha256(rgb.tobytes()).digest())
                 pink_pixels += sum(count for count, (red, green, blue) in rgb.getcolors(image.width * image.height)
                                    if red > 80 and red > green * 1.3 and blue > green * 1.05 and red > blue)
+            assert label_pixels > 0, 'Selected yellow label must be composited into the GIF'
             assert pink_pixels > 0, 'GIF quantization must preserve the colored hotspot'
             assert duration == 4000 and len(set(frames)) > 60
             assert len(image.convert('RGB').getcolors(image.width * image.height)) > 32
@@ -136,6 +216,8 @@ def main():
             expected_background = [7, 16, 25]
 
             def assert_restored():
+                check_labels(page)
+                assert page.evaluate('({text:selectedLabelHotspot().labelText, pos:selectedLabelHotspot().labelPosition})') == label_settings
                 assert canvas_background(page) == expected_background
                 assert page.evaluate('state.viewer.getView()') == before
                 assert page.evaluate('window.liveGifWorkers') == 0

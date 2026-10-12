@@ -20,3 +20,18 @@ including its colors, hotspots, labels and selected highlight, with a white or
 dark background chosen independently of the page theme. It preserves the current
 framing and excludes the surrounding page controls.
 _Avoid_: Screen recording
+
+## Annotations
+
+**Hotspot leader-line annotation**: A hotspot name placed toward the outside of
+the protein view, connected to its residue by a thin line. It follows the current
+view and appears in rotation GIF exports.
+
+_Avoid_: Fixed screen label
+
+**Pinned hotspot label**: A hotspot label whose position stays fixed relative to
+the canvas while the protein rotates. Its leader line follows the hotspot.
+Unpinning returns it to automatic placement.
+
+**Custom label text**: Display text for one hotspot, defaulting to its residue
+identifier (such as A120). It does not change the hotspot's identity.

@@ -471,6 +471,8 @@
     .theme-icon-moon { display: none; }
     :root[data-theme="light"] .theme-icon-sun { display: none; }
     :root[data-theme="light"] .theme-icon-moon { display: block; }
+    .viewer-viewport { position: relative; min-width: 0; min-height: 0; overflow: hidden; }
+    #hotspotLabels { position: absolute; top: 0; left: 0; pointer-events: none; }
     #viewer {
       position: relative;
       width: 100%;
@@ -509,3 +511,6 @@
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; }
     }
+
+    .label-pin { display: flex; align-items: center; gap: 8px; }
+    .label-pin input { width: auto; }

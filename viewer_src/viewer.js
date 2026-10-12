@@ -32,6 +32,9 @@
       chainColors: { A: DEFAULT_CHAIN_COLOR.name, B: DEFAULT_CHAIN_COLOR.name },
       viewer: null,
       pendingLoads: 0,
+      labelBoxes: [],
+      redrawLabels: null,
+      labelBackground: null,
       gifExportBusy: false
     };
 
@@ -49,6 +52,8 @@
       chainBColor: document.getElementById('chainBColor'),
       chainColorNote: document.getElementById('chainColorNote'),
       status: document.getElementById('status'),
+      labelText: document.getElementById('labelText'),
+      labelPinned: document.getElementById('labelPinned'),
       selectedHotspot: document.getElementById('selectedHotspot'),
       selectedHotspotSection: document.getElementById('selectedHotspotSection'),
       selectedColor: document.getElementById('selectedColor'),
@@ -61,6 +66,7 @@
       hotspotSummary: document.getElementById('hotspotSummary'),
       hotspotResultsSection: document.getElementById('hotspotResultsSection'),
       viewer: document.getElementById('viewer'),
+      hotspotLabels: document.getElementById('hotspotLabels'),
       viewerTitle: document.getElementById('viewerTitle'),
       viewerMeta: document.getElementById('viewerMeta'),
       themeToggle: document.getElementById('themeToggle'),
@@ -151,6 +157,7 @@
       gifEls.gifResult.hidden = true;
       gifEls.gifStatus.textContent = 'Capturing rotation…';
       try {
+        state.labelBackground = background;
         viewer.setBackgroundColor(background, 1);
         // Freeze the viewport aspect ratio even if the browser window is resized.
         els.viewer.style.width = `${bounds.width}px`;
@@ -178,6 +185,7 @@
           // rotate() renders immediately in 3Dmol; no geometry rebuild is needed.
           viewer.rotate(360 * frame / frameCount, 'vy');
           context.drawImage(source, 0, 0, frameCanvas.width, frameCanvas.height);
+          context.drawImage(els.hotspotLabels, 0, 0, frameCanvas.width, frameCanvas.height);
           encoder.addFrame(context, { copy: true, delay: 1000 / fps });
           gifEls.gifProgress.value = 40 * (frame + 1) / frameCount;
           gifEls.gifStatus.textContent = `Capturing rotation: ${frame + 1}/${frameCount} frames`;
@@ -220,6 +228,7 @@
         if (originalStyle === null) els.viewer.removeAttribute('style');
         else els.viewer.setAttribute('style', originalStyle);
         try {
+          state.labelBackground = null;
           viewer.setBackgroundColor(viewerBackgroundColor(), 1);
           viewer.resize();
           viewer.setView(initialView);
@@ -648,6 +657,7 @@
       els.selectedHotspot.value = [...els.selectedHotspot.options].some(option => option.value === current) ? current : els.selectedHotspot.options[0].value;
       const selected = state.hotspots.find(hotspot => hotspotKey(hotspot) === els.selectedHotspot.value);
       setColorPickerValue(els.selectedColor, selected?.colorName || DEFAULT_COLOR.name);
+      updateLabelControls();
       updateLocateControl(rows);
     }
 
@@ -693,14 +703,213 @@
       renderAll(`Updated chain ${chain} color to ${color.name}.`);
     }
 
+    function selectedLabelHotspot() {
+      return state.hotspots.find(h => hotspotKey(h) === els.selectedHotspot.value);
+    }
+
+    function updateLabelControls() {
+      const hotspot = selectedLabelHotspot();
+      els.labelText.value = hotspot?.labelText || (hotspot ? residueLabel(hotspot.chain, hotspot.resseq) : '');
+      els.labelPinned.checked = Boolean(hotspot?.labelPosition);
+    }
+
+    function initLabelEditing() {
+      els.labelText.addEventListener('input', () => {
+        const hotspot = selectedLabelHotspot();
+        if (!hotspot || state.gifExportBusy) return;
+        hotspot.labelText = [...els.labelText.value.replace(/[\r\n]/g, ' ')].slice(0, 80).join('').trim();
+        state.redrawLabels?.();
+      });
+      els.labelText.addEventListener('blur', updateLabelControls);
+      els.labelPinned.addEventListener('change', () => {
+        const hotspot = selectedLabelHotspot();
+        if (!hotspot || state.gifExportBusy) return;
+        const box = state.labelBoxes.find(b => b.key === hotspotKey(hotspot));
+        const bounds = els.hotspotLabels.getBoundingClientRect();
+        hotspot.labelPosition = els.labelPinned.checked
+          ? { x: (box?.x ?? bounds.width / 2) / bounds.width,
+              y: (box?.y ?? bounds.height / 2) / bounds.height } : null;
+        state.redrawLabels?.();
+        updateLabelControls();
+      });
+      const viewport = els.viewer.parentElement;
+      let drag = null;
+      const point = event => {
+        const bounds = els.hotspotLabels.getBoundingClientRect();
+        return { x: event.clientX - bounds.left, y: event.clientY - bounds.top, bounds };
+      };
+      viewport.addEventListener('pointerdown', event => {
+        if (state.gifExportBusy || event.button !== 0 || drag) return;
+        const p = point(event);
+        const box = [...state.labelBoxes].reverse().find(b =>
+          p.x >= b.x && p.x <= b.x + b.width && p.y >= b.y && p.y <= b.y + b.height);
+        if (!box) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        drag = { key: box.key, id: event.pointerId, dx: p.x - box.x, dy: p.y - box.y,
+          startX: p.x, startY: p.y, width: box.width, height: box.height };
+        viewport.setPointerCapture(event.pointerId);
+        selectHotspot(box.key);
+      }, true);
+      viewport.addEventListener('pointermove', event => {
+        if (!drag || event.pointerId !== drag.id) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (state.gifExportBusy) return;
+        const p = point(event);
+        if (!drag.moved && Math.hypot(p.x - drag.startX, p.y - drag.startY) < 3) return;
+        drag.moved = true;
+        const hotspot = state.hotspots.find(h => hotspotKey(h) === drag.key);
+        if (!hotspot) return;
+        hotspot.labelPosition = {
+          x: Math.max(0, Math.min(p.bounds.width - drag.width, p.x - drag.dx)) / p.bounds.width,
+          y: Math.max(0, Math.min(p.bounds.height - drag.height, p.y - drag.dy)) / p.bounds.height
+        };
+        state.redrawLabels?.();
+        els.labelPinned.checked = true;
+      }, true);
+      const finish = event => {
+        if (!drag || event.pointerId !== drag.id) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const id = drag.id;
+        drag = null;
+        if (viewport.hasPointerCapture(id)) viewport.releasePointerCapture(id);
+      };
+      for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) viewport.addEventListener(type, finish, true);
+      // 3Dmol also listens to legacy mouse/touch events; label drags must not reach it.
+      for (const type of ['mousedown', 'mousemove', 'mouseup', 'touchstart', 'touchmove', 'touchend']) {
+        viewport.addEventListener(type, event => {
+          if (drag) { event.preventDefault(); event.stopImmediatePropagation(); }
+        }, { capture: true, passive: false });
+      }
+    }
+
+    function drawHotspotLabels(viewer, rows, structureCoords) {
+      const canvas = els.hotspotLabels;
+      const source = viewer.getCanvas();
+      const bounds = source.getBoundingClientRect();
+      const width = bounds.width, height = bounds.height;
+      if (!width || !height) return;
+      if (canvas.width !== source.width || canvas.height !== source.height) {
+        canvas.width = source.width;
+        canvas.height = source.height;
+      }
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+      const ctx = canvas.getContext('2d');
+      ctx.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
+      ctx.clearRect(0, 0, width, height);
+      state.labelBoxes = [];
+      // 3Dmol returns page coordinates, while this layer uses canvas-local pixels.
+      const local = point => ({ x: point.x - bounds.left - window.scrollX,
+        y: point.y - bounds.top - window.scrollY });
+      const projected = viewer.modelToScreen(structureCoords).map(local);
+      let minX = width, maxX = 0;
+      for (const point of projected) {
+        if (Number.isFinite(point.x)) {
+          minX = Math.min(minX, point.x);
+          maxX = Math.max(maxX, point.x);
+        }
+      }
+      const center = Math.max(0, Math.min(width, (minX + maxX) / 2));
+      ctx.font = '12px Arial, sans-serif';
+      ctx.textBaseline = 'middle';
+      const margin = 8, labelHeight = 20, gap = 5;
+      const capacity = Math.max(0, Math.floor((height - 2 * margin + gap) / (labelHeight + gap)));
+      const groups = [[], []];
+      const pinned = [];
+      const overlaps = (a, b) => a.x < b.x + b.width && a.x + a.width > b.x &&
+        a.y < b.y + b.height && a.y + a.height > b.y;
+      const makeBox = (row, point, selected, hotspot) => {
+        let text = hotspot.labelText || row.hotspot;
+        const maxWidth = Math.max(10, Math.min(width / 2 - 2 * margin, 260));
+        if (ctx.measureText(text).width + 10 > maxWidth) {
+          let chars = [...text];
+          while (chars.length && ctx.measureText(chars.join('') + '…').width + 10 > maxWidth) chars.pop();
+          text = chars.join('') + '…';
+        }
+        return { key: hotspotKey(hotspot), text, point, selected,
+          width: ctx.measureText(text).width + 10, height: labelHeight };
+      };
+      for (const row of rows) {
+        if (!row.found || !row.coord) continue;
+        const point = local(viewer.modelToScreen(row.coord));
+        if (!Number.isFinite(point.x) || !Number.isFinite(point.y) ||
+            point.x < 0 || point.x > width || point.y < 0 || point.y > height) continue;
+        const selected = hotspotKey({ chain: row.chain, resseq: row.residueNumber }) === els.selectedHotspot.value;
+        const hotspot = state.hotspots.find(h => h.chain === row.chain && h.resseq === row.residueNumber);
+        if (!hotspot) continue;
+        const box = makeBox(row, point, selected, hotspot);
+        if (hotspot.labelPosition) {
+          box.x = Math.max(0, Math.min(width - box.width, hotspot.labelPosition.x * width));
+          box.y = Math.max(0, Math.min(height - box.height, hotspot.labelPosition.y * height));
+          pinned.push(box);
+        } else groups[point.x < center ? 0 : 1].push(box);
+      }
+      const dark = (state.labelBackground || viewerBackgroundColor()).toLowerCase() === '#071019';
+      ctx.strokeStyle = dark ? '#cbd5e1' : '#475569';
+      ctx.lineWidth = 1;
+      for (const [side, group] of groups.entries()) {
+        // Prioritize the selected hotspot if the viewport cannot fit every label.
+        const visible = group.sort((a, b) => Number(b.selected) - Number(a.selected))
+          .slice(0, capacity).sort((a, b) => a.point.y - b.point.y);
+        let bottom = margin - gap;
+        for (const item of visible) {
+          item.y = Math.max(bottom + gap, Math.min(height - margin - labelHeight, item.point.y - labelHeight / 2));
+          bottom = item.y + labelHeight;
+        }
+        let next = height - margin + gap;
+        for (let i = visible.length - 1; i >= 0; i--) {
+          visible[i].y = Math.min(visible[i].y, next - gap - labelHeight);
+          next = visible[i].y;
+        }
+        for (const box of visible.sort((a, b) => Number(b.selected) - Number(a.selected))) {
+          box.x = side === 0
+            ? Math.max(margin, Math.min(width / 2 - box.width - gap, minX - 16 - box.width))
+            : Math.min(width - margin - box.width, Math.max(width / 2 + gap, maxX + 16));
+          if (pinned.some(p => overlaps(box, p))) {
+            let found = false;
+            for (let y = margin; y + labelHeight <= height - margin; y += labelHeight + gap) {
+              box.y = y;
+              if (![...pinned, ...state.labelBoxes].some(p => overlaps(box, p))) { found = true; break; }
+            }
+            if (!found) continue;
+          }
+          if (!state.labelBoxes.some(p => overlaps(box, p))) state.labelBoxes.push(box);
+        }
+      }
+      state.labelBoxes.push(...pinned);
+      state.labelBoxes.sort((a, b) => Number(a.selected) - Number(b.selected));
+      // Draw all lines first so no later line can cross over a label's text.
+      for (const box of state.labelBoxes) {
+        ctx.beginPath();
+        ctx.moveTo(box.point.x, box.point.y);
+        ctx.lineTo(box.point.x < box.x + box.width / 2 ? box.x : box.x + box.width, box.y + labelHeight / 2);
+        ctx.stroke();
+      }
+      for (const box of state.labelBoxes) {
+        ctx.globalAlpha = 0.75;
+        ctx.fillStyle = box.selected ? '#f1c75b' : '#ffffff';
+        ctx.fillRect(box.x, box.y, box.width, labelHeight);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = box.selected ? '#182520' : '#000000';
+        ctx.fillText(box.text, box.x + 5, box.y + labelHeight / 2);
+      }
+    }
+
     function renderStructure({ preserveView = false, rows = buildHotspotRows() } = {}) {
       gifEls.exportGif.disabled = true;
       let previousView = null;
       if (preserveView && state.viewer && typeof state.viewer.getView === 'function') {
         try { previousView = state.viewer.getView(); } catch (error) {}
       }
+      state.labelBoxes = [];
+      state.redrawLabels = null;
+      els.hotspotLabels.width = els.hotspotLabels.height = 0;
       els.viewer.innerHTML = '';
       if (state.viewer) {
+        state.viewer.setViewChangeCallback(null);
         try { state.viewer.clear(); } catch (error) {}
         state.viewer = null;
       }
@@ -731,17 +940,12 @@
         }
         viewer.addStyle(selector, { stick: { color: row.colorHex, radius: 0.28 } });
         viewer.addStyle(selector, { sphere: { color: row.colorHex, scale: 0.36 } });
-        if (row.coord) {
-          viewer.addLabel(row.hotspot, {
-            position: row.coord,
-            fontColor: selected ? '#182520' : 'black',
-            backgroundColor: selected ? '#f1c75b' : 'white',
-            backgroundOpacity: 0.75,
-            fontSize: 12,
-            inFront: true
-          });
-        }
       }
+      // Render the annotations after WebGL, without triggering another viewer render.
+      const structureCoords = viewer.selectedAtoms({}).map(({ x, y, z }) => ({ x, y, z }));
+      state.redrawLabels = () => drawHotspotLabels(viewer, rows, structureCoords);
+      viewer.setViewChangeCallback(state.redrawLabels);
+
       if (previousView && typeof viewer.setView === 'function') {
         viewer.setView(previousView);
       } else {
@@ -772,6 +976,7 @@
       const rows = buildHotspotRows();
       const row = rows.find(item => hotspotKey({ chain: item.chain, resseq: item.residueNumber }) === key);
       els.selectedHotspot.value = key;
+      updateLabelControls();
       setColorPickerValue(els.selectedColor, hotspot.colorName);
       els.selectedHotspotSection.open = true;
       renderHotspotTable(rows);
@@ -956,6 +1161,7 @@
     async function init() {
       gifEls.exportGif.addEventListener('click', exportRotationGif);
       initThemeToggle();
+      initLabelEditing();
       initOptions();
       els.pdbSelect.addEventListener('change', event => loadPdb(event.target.value));
       els.addHotspots.addEventListener('click', addHotspots);
