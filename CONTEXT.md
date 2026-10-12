@@ -11,3 +11,11 @@ _Avoid_: Portal process
 **Local viewer server**:
 The Python process that serves the generated page, manifests, and local protein files to viewer sessions.
 _Avoid_: Viewer page
+
+## Exports
+
+**Rotation GIF export**:
+A looping animation of the current protein view completing one horizontal turn,
+including its colors, hotspots, labels and selected highlight. It preserves the
+current framing and excludes the surrounding page controls.
+_Avoid_: Screen recording

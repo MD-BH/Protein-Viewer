@@ -474,6 +474,10 @@
       background: var(--viewer);
     }
     #viewer .empty { padding: 18px; color: var(--viewer-muted); }
+    #gifProgress { width: 100%; accent-color: var(--accent); }
+    #gifResult { overflow-wrap: anywhere; color: inherit; }
+    #gifExportSection [hidden] { display: none; }
+    [inert] { cursor: wait; }
     @media (max-width: 1020px) {
       .shell { grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); }
       .sidebar { padding: 16px; }

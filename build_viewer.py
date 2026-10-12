@@ -10,6 +10,8 @@ import sys
 import threading
 import time
 import webbrowser
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -29,6 +31,7 @@ DEFAULT_PORT = 8766
 VIEWER_HEARTBEAT_TIMEOUT = 60
 VIEWER_CLOSE_GRACE = 15
 VIEWER_SESSION_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,80}\Z")
+MAX_GIF_BYTES = 64 * 1024 * 1024
 
 
 def read_source(path: Path) -> str:
@@ -180,6 +183,9 @@ class ViewerRequestHandler(http.server.SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_POST(self) -> None:
+        if urlsplit(self.path).path == "/__viewer/export-gif":
+            self.export_gif()
+            return
         if urlsplit(self.path).path != "/__viewer/close":
             self.send_error(404, "Not found")
             return
@@ -201,6 +207,67 @@ class ViewerRequestHandler(http.server.SimpleHTTPRequestHandler):
         self.send_response(204)
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
+
+    def export_gif(self) -> None:
+        if not self._is_same_origin_request():
+            self.send_error(403, "GIF exports are same-origin only")
+            return
+        names = parse_qs(urlsplit(self.path).query).get("pdb", [])
+        root = Path(self.directory)
+        if (len(names) != 1 or not names[0] or "/" in names[0] or "\\" in names[0]
+                or "\x00" in names[0] or not names[0].endswith(".pdb")
+                or not (root / "pdbs" / names[0]).is_file()):
+            self.send_error(400, "Invalid PDB filename")
+            return
+        if self.headers.get_content_type() != "image/gif":
+            self.send_error(415, "Expected image/gif")
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            length = 0
+        if self.headers.get("Transfer-Encoding") or length < 14:
+            self.send_error(400, "Invalid GIF content length")
+            return
+        if length > MAX_GIF_BYTES:
+            self.send_error(413, "GIF exceeds 64 MiB")
+            return
+        self.connection.settimeout(30)
+        try:
+            data = self.rfile.read(length)
+        except (OSError, TimeoutError):
+            self.send_error(408, "GIF upload timed out")
+            return
+        if (len(data) != length or data[:6] not in (b"GIF87a", b"GIF89a")
+                or not int.from_bytes(data[6:8], "little")
+                or not int.from_bytes(data[8:10], "little")):
+            self.send_error(400, "Invalid GIF data")
+            return
+        # Only the server chooses the destination; concurrent exports never overwrite.
+        stem = re.sub(r"[^A-Za-z0-9_.-]", "_", Path(names[0]).stem)[:80]
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        folder = root / "gifs"
+        target = folder / f"{stem}-{stamp}-{uuid.uuid4().hex}.gif"
+        created = False
+        try:
+            if folder.is_symlink():
+                raise OSError("GIF directory must be inside the project")
+            folder.mkdir(exist_ok=True)
+            with target.open("xb") as output:
+                created = True
+                output.write(data)
+        except OSError:
+            if created:
+                target.unlink(missing_ok=True)
+            self.send_error(500, "Could not save GIF; check the project's gifs directory permissions")
+            return
+        body = json.dumps({"path": f"gifs/{target.name}"}).encode("utf-8")
+        self.send_response(201)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
 
     def log_message(self, format: str, *args) -> None:
         if urlsplit(self.path).path.startswith("/__viewer/"):
@@ -231,7 +298,6 @@ def serve(host: str, port: int, open_browser: bool) -> None:
         sessions = ViewerSessions()
         with create_viewer_server(host, port, ROOT, sessions) as httpd:
             stop_monitor = threading.Event()
-            stopped_after_viewers = threading.Event()
             monitor = threading.Thread(
                 target=monitor_viewer_sessions,
                 args=(httpd, sessions, stop_monitor),
@@ -245,12 +311,10 @@ def serve(host: str, port: int, open_browser: bool) -> None:
                 if open_browser:
                     webbrowser.open(url)
                 httpd.serve_forever()
-                stopped_after_viewers.set()
             finally:
                 stop_monitor.set()
                 monitor.join()
-            if stopped_after_viewers.is_set():
-                print("No viewer pages remain. Server stopped.")
+            print("No viewer pages remain. Server stopped.")
     except KeyboardInterrupt:
         print("\nServer stopped.")
     except OSError as exc:

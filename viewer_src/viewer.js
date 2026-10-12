@@ -16,17 +16,7 @@
       { name: 'Lime', hex: '#B8DA69' }
     ];
     const DEFAULT_COLOR = COLORS[0];
-    const CHAIN_COLORS = [
-      { name: 'Gray', hex: '#B7C8D6' },
-      { name: 'Red', hex: '#FF7185' },
-      { name: 'Orange', hex: '#FF995E' },
-      { name: 'Pink', hex: '#F080CF' },
-      { name: 'Purple', hex: '#C18BFF' },
-      { name: 'Blue', hex: '#7AA6FF' },
-      { name: 'Cyan', hex: '#58C9D2' },
-      { name: 'Green', hex: '#70D6A2' },
-      { name: 'Lime', hex: '#B8DA69' }
-    ];
+    const CHAIN_COLORS = [{ name: 'Gray', hex: '#B7C8D6' }, ...COLORS];
     const DEFAULT_CHAIN_COLOR = CHAIN_COLORS[0];
     const COLORABLE_CHAINS = ['A', 'B'];
     const HOTSPOT_PATTERN = /(^|[^A-Za-z0-9_])([A-Za-z_])\s*:?\s*(-?\d+)(?=$|[^A-Za-z0-9_])/g;
@@ -34,15 +24,15 @@
     const state = {
       pdbs: [],
       hotspotFiles: [],
-      pdbTextCache: new Map(),
-      hotspotTextCache: new Map(),
       pdbIndex: 0,
       pdbLoadRequest: 0,
       pdbText: '',
       parsed: null,
       hotspots: [],
       chainColors: { A: DEFAULT_CHAIN_COLOR.name, B: DEFAULT_CHAIN_COLOR.name },
-      viewer: null
+      viewer: null,
+      pendingLoads: 0,
+      gifExportBusy: false
     };
 
     const els = {
@@ -78,6 +68,168 @@
     };
 
     const THEME_STORAGE_KEY = document.documentElement.dataset.themeStorageKey || 'protein-viewer-theme';
+
+    const gifEls = Object.fromEntries([
+      'gifSize', 'gifDuration', 'gifFps', 'gifSettings', 'exportGif',
+      'cancelGif', 'gifProgress', 'gifStatus', 'gifResult'
+    ].map(id => [id, document.getElementById(id)]));
+
+    function updateGifAvailability() {
+      gifEls.exportGif.disabled = state.gifExportBusy || state.pendingLoads > 0 || !state.viewer;
+    }
+
+    function encodeGif(encoder, signal) {
+      return new Promise((resolve, reject) => {
+        const finish = (error, blob) => {
+          clearTimeout(timeout);
+          signal.removeEventListener('abort', cancel);
+          error ? reject(error) : resolve(blob);
+        };
+        const cancel = () => finish(new DOMException('Export cancelled', 'AbortError'));
+        const timeout = setTimeout(() => finish(new Error('GIF encoding timed out. Try a smaller size.')), 120000);
+        signal.addEventListener('abort', cancel, { once: true });
+        encoder.on('finished', blob => finish(null, blob));
+        encoder.on('progress', fraction => {
+          gifEls.gifProgress.value = 40 + fraction * 50;
+          gifEls.gifStatus.textContent = `Encoding GIF: ${Math.round(fraction * 100)}%`;
+        });
+        // gif.js 0.2.0 does not forward worker failures. Attach handlers before
+        // dispatching work, so a missing/broken worker cannot leave the UI locked.
+        const spawnWorkers = encoder.spawnWorkers;
+        encoder.spawnWorkers = function () {
+          const count = spawnWorkers.call(this);
+          for (const worker of this.freeWorkers) {
+            const failed = () => finish(new Error('GIF worker failed. Reload the page and try again.'));
+            worker.addEventListener('error', failed);
+            worker.addEventListener('messageerror', failed);
+          }
+          return count;
+        };
+        try {
+          signal.throwIfAborted();
+          encoder.render();
+        } catch (error) {
+          finish(error);
+        }
+      });
+    }
+
+    async function exportRotationGif() {
+      if (state.gifExportBusy) return;
+      const viewer = state.viewer;
+      if (!viewer || state.pendingLoads || viewer.isAnimated()) {
+        gifEls.gifStatus.textContent = 'Wait for the structure to finish loading or moving, then export.';
+        return;
+      }
+      if (!window.GIF) {
+        gifEls.gifStatus.textContent = 'GIF encoder is missing. Check the local viewer_src/vendor files and reload.';
+        return;
+      }
+      const size = Number(gifEls.gifSize.value);
+      const seconds = Number(gifEls.gifDuration.value);
+      const fps = Number(gifEls.gifFps.value);
+      if (![480, 640, 800].includes(size) || ![2, 4, 6].includes(seconds) || ![10, 20].includes(fps)) return;
+      const initialView = viewer.getView().slice();
+      const originalStyle = els.viewer.getAttribute('style');
+      const bounds = els.viewer.getBoundingClientRect();
+      const locked = [...document.querySelectorAll('.sidebar > :not(#gifExportSection), .stage, #gifSettings')]
+        .map(element => [element, element.inert]);
+      const controller = new AbortController();
+      const cancel = () => controller.abort();
+      let encoder;
+      let frameCanvas;
+      state.gifExportBusy = true;
+      updateGifAvailability();
+      locked.forEach(([element]) => { element.inert = true; });
+      gifEls.cancelGif.hidden = false;
+      gifEls.cancelGif.disabled = false;
+      gifEls.cancelGif.addEventListener('click', cancel);
+      gifEls.gifProgress.hidden = false;
+      gifEls.gifProgress.value = 0;
+      gifEls.gifResult.hidden = true;
+      gifEls.gifStatus.textContent = 'Capturing rotation…';
+      try {
+        // Freeze the viewport aspect ratio even if the browser window is resized.
+        els.viewer.style.width = `${bounds.width}px`;
+        els.viewer.style.height = `${bounds.height}px`;
+        viewer.resize();
+        const source = viewer.getCanvas();
+        const scale = size / Math.max(source.width, source.height);
+        frameCanvas = document.createElement('canvas');
+        frameCanvas.width = Math.max(1, Math.round(source.width * scale));
+        frameCanvas.height = Math.max(1, Math.round(source.height * scale));
+        const context = frameCanvas.getContext('2d');
+        if (!context) throw new Error('Could not create a capture canvas.');
+        encoder = new GIF({
+          // Sample every pixel so small colored hotspots survive GIF quantization.
+          workers: 2, quality: 1, repeat: 0,
+          width: frameCanvas.width, height: frameCanvas.height,
+          workerScript: 'viewer_src/vendor/gif.js-0.2.0/gif.worker.js'
+        });
+        const frameCount = seconds * fps;
+        for (let frame = 0; frame < frameCount; frame += 1) {
+          // Yield between captures so progress, cancellation and heartbeats work.
+          await new Promise(resolve => setTimeout(resolve, 0));
+          controller.signal.throwIfAborted();
+          viewer.setView(initialView);
+          // rotate() renders immediately in 3Dmol; no geometry rebuild is needed.
+          viewer.rotate(360 * frame / frameCount, 'vy');
+          context.drawImage(source, 0, 0, frameCanvas.width, frameCanvas.height);
+          encoder.addFrame(context, { copy: true, delay: 1000 / fps });
+          gifEls.gifProgress.value = 40 * (frame + 1) / frameCount;
+          gifEls.gifStatus.textContent = `Capturing rotation: ${frame + 1}/${frameCount} frames`;
+        }
+        viewer.setView(initialView);
+        viewer.render();
+        gifEls.gifStatus.textContent = 'Encoding GIF…';
+        const blob = await encodeGif(encoder, controller.signal);
+        controller.signal.throwIfAborted();
+        if (blob.size > 64 * 1024 * 1024) throw new Error('GIF exceeds 64 MiB. Try a smaller size or fewer frames.');
+        gifEls.cancelGif.disabled = true;
+        gifEls.gifStatus.textContent = 'Saving to gifs/…';
+        gifEls.gifProgress.value = 90;
+        const pdbName = state.pdbs[state.pdbIndex].name;
+        const response = await fetch(`/__viewer/export-gif?pdb=${encodeURIComponent(pdbName)}`, {
+          method: 'POST', headers: { 'Content-Type': 'image/gif' }, body: blob,
+          signal: AbortSignal.timeout(60000)
+        });
+        if (!response.ok) {
+          throw new Error(`Save failed (HTTP ${response.status}). Run build_viewer.py and check gifs/ permissions.`);
+        }
+        const result = await response.json();
+        gifEls.gifResult.href = result.path;
+        gifEls.gifResult.textContent = result.path;
+        gifEls.gifResult.hidden = false;
+        gifEls.gifProgress.value = 100;
+        gifEls.gifStatus.textContent = 'GIF saved. Open the file below to view it.';
+      } catch (error) {
+        gifEls.gifStatus.textContent = controller.signal.aborted ? 'Export cancelled. No GIF was saved.' : `Export failed: ${error.message}`;
+      } finally {
+        if (encoder) {
+          // abort() only terminates active workers; completed workers also need cleanup.
+          for (const worker of [...encoder.activeWorkers, ...encoder.freeWorkers]) worker.terminate();
+          encoder.frames = [];
+          encoder.imageParts = [];
+          encoder.activeWorkers = [];
+          encoder.freeWorkers = [];
+        }
+        if (frameCanvas) frameCanvas.width = frameCanvas.height = 0;
+        if (originalStyle === null) els.viewer.removeAttribute('style');
+        else els.viewer.setAttribute('style', originalStyle);
+        try {
+          viewer.resize();
+          viewer.setView(initialView);
+          viewer.render();
+        } finally {
+          locked.forEach(([element, inert]) => { element.inert = inert; });
+          state.gifExportBusy = false;
+          updateGifAvailability();
+          gifEls.cancelGif.removeEventListener('click', cancel);
+          gifEls.cancelGif.hidden = true;
+          gifEls.gifProgress.hidden = true;
+        }
+      }
+    }
 
     function currentTheme() {
       return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
@@ -270,30 +422,12 @@
       return manifest;
     }
 
-    async function fetchPdbText(pdb) {
-      if (state.pdbTextCache.has(pdb.path)) {
-        return state.pdbTextCache.get(pdb.path);
-      }
-      const response = await fetch(pdb.path, { cache: 'no-store' });
+    async function fetchText(file) {
+      const response = await fetch(file.path, { cache: 'no-store' });
       if (!response.ok) {
-        throw new Error(`Could not load ${pdb.path} (${response.status})`);
+        throw new Error(`Could not load ${file.path} (${response.status})`);
       }
-      const text = await response.text();
-      state.pdbTextCache.set(pdb.path, text);
-      return text;
-    }
-
-    async function fetchHotspotText(hotspotFile) {
-      if (state.hotspotTextCache.has(hotspotFile.path)) {
-        return state.hotspotTextCache.get(hotspotFile.path);
-      }
-      const response = await fetch(hotspotFile.path, { cache: 'no-store' });
-      if (!response.ok) {
-        throw new Error(`Could not load ${hotspotFile.path} (${response.status})`);
-      }
-      const text = await response.text();
-      state.hotspotTextCache.set(hotspotFile.path, text);
-      return text;
+      return response.text();
     }
 
     function parsePdbText(pdbText) {
@@ -319,7 +453,6 @@
         if (residues.has(key)) {
           if (atomName === 'CA') {
             residues.get(key).coord = coord;
-            residues.get(key).coordAtom = atomName;
           }
           continue;
         }
@@ -331,8 +464,7 @@
           residueId: residueLabel(chain, resseq, icode),
           resname3,
           resname1: AA3_TO_AA1[resname3] || 'X',
-          coord,
-          coordAtom: atomName
+          coord
         };
         residues.set(key, residue);
         if (!chains.has(chain)) chains.set(chain, []);
@@ -378,18 +510,11 @@
       const rows = [];
       for (const hotspot of state.hotspots) {
         const exact = state.parsed.residues.get(residueKey(hotspot.chain, hotspot.resseq, ''));
-        const insertionCodes = [];
-        for (const residue of state.parsed.residues.values()) {
-          if (residue.chain === hotspot.chain && residue.resseq === Number(hotspot.resseq) && residue.icode) {
-            insertionCodes.push(residue.icode);
-          }
-        }
         if (exact) {
           rows.push({
             hotspot: residueLabel(hotspot.chain, hotspot.resseq),
             chain: hotspot.chain,
             residueNumber: hotspot.resseq,
-            insertionCode: '',
             resname3: exact.resname3,
             resname1: exact.resname1,
             colorName: hotspot.colorName,
@@ -399,11 +524,16 @@
             coord: exact.coord
           });
         } else {
+          const insertionCodes = [];
+          for (const residue of state.parsed.residues.values()) {
+            if (residue.chain === hotspot.chain && residue.resseq === Number(hotspot.resseq) && residue.icode) {
+              insertionCodes.push(residue.icode);
+            }
+          }
           rows.push({
             hotspot: residueLabel(hotspot.chain, hotspot.resseq),
             chain: hotspot.chain,
             residueNumber: hotspot.resseq,
-            insertionCode: '',
             resname3: '',
             resname1: '',
             colorName: hotspot.colorName,
@@ -445,8 +575,7 @@
         </div>`;
     }
 
-    function renderHotspotTable() {
-      const rows = buildHotspotRows();
+    function renderHotspotTable(rows = buildHotspotRows()) {
       els.hotspotSummary.textContent = String(rows.length);
       if (!rows.length) {
         els.hotspotPanel.innerHTML = '<p class="empty">No hotspots selected.</p>';
@@ -481,7 +610,7 @@
         </div>`;
     }
 
-    function updateSelectedControls() {
+    function updateSelectedControls(rows) {
       const current = els.selectedHotspot.value;
       els.selectedHotspot.innerHTML = '';
       if (!state.hotspots.length) {
@@ -498,7 +627,6 @@
       const wasHidden = els.selectedHotspotSection.hidden;
       els.selectedHotspotSection.hidden = false;
       if (wasHidden) els.selectedHotspotSection.open = true;
-      const rows = buildHotspotRows();
       for (const hotspot of state.hotspots) {
         const key = hotspotKey(hotspot);
         const row = rows.find(item => item.chain === hotspot.chain && item.residueNumber === hotspot.resseq);
@@ -511,12 +639,12 @@
       els.selectedHotspot.value = [...els.selectedHotspot.options].some(option => option.value === current) ? current : els.selectedHotspot.options[0].value;
       const selected = state.hotspots.find(hotspot => hotspotKey(hotspot) === els.selectedHotspot.value);
       setColorPickerValue(els.selectedColor, selected?.colorName || DEFAULT_COLOR.name);
-      updateLocateControl();
+      updateLocateControl(rows);
     }
 
-    function updateLocateControl() {
+    function updateLocateControl(rows = buildHotspotRows()) {
       const selectedKey = els.selectedHotspot.value;
-      const row = buildHotspotRows().find(item => hotspotKey({ chain: item.chain, resseq: item.residueNumber }) === selectedKey);
+      const row = rows.find(item => hotspotKey({ chain: item.chain, resseq: item.residueNumber }) === selectedKey);
       const canLocate = Boolean(row?.found);
       els.locateHotspot.disabled = !canLocate;
       els.locateNote.hidden = !selectedKey || canLocate;
@@ -556,7 +684,8 @@
       renderAll(`Updated chain ${chain} color to ${color.name}.`);
     }
 
-    function renderStructure({ preserveView = false } = {}) {
+    function renderStructure({ preserveView = false, rows = buildHotspotRows() } = {}) {
+      gifEls.exportGif.disabled = true;
       let previousView = null;
       if (preserveView && state.viewer && typeof state.viewer.getView === 'function') {
         try { previousView = state.viewer.getView(); } catch (error) {}
@@ -584,7 +713,7 @@
         viewer.setStyle({ chain }, { cartoon: { color: color.hex } });
       }
       viewer.addStyle({ hetflag: true }, { stick: { color: '#9ca3af', radius: 0.16 } });
-      for (const row of buildHotspotRows()) {
+      for (const row of rows) {
         if (!row.found) continue;
         const selector = { chain: row.chain, resi: String(row.residueNumber) };
         const selected = hotspotKey({ chain: row.chain, resseq: row.residueNumber }) === els.selectedHotspot.value;
@@ -610,14 +739,16 @@
         viewer.zoomTo();
       }
       viewer.render();
+      updateGifAvailability();
     }
 
     function renderAll(message, kind = 'ok', { preserveView = true } = {}) {
+      const rows = buildHotspotRows();
       renderSequences();
       updateChainColorControls();
-      updateSelectedControls();
-      renderHotspotTable();
-      renderStructure({ preserveView });
+      updateSelectedControls(rows);
+      renderHotspotTable(rows);
+      renderStructure({ preserveView, rows });
       if (message) setStatus(message, kind);
       const pdbName = state.pdbs[state.pdbIndex]?.name || 'No PDB';
       els.viewerTitle.textContent = pdbName;
@@ -629,21 +760,23 @@
       if (!optionExists) return;
       const hotspot = state.hotspots.find(item => hotspotKey(item) === key);
       if (!hotspot) return;
-      const row = buildHotspotRows().find(item => hotspotKey({ chain: item.chain, resseq: item.residueNumber }) === key);
+      const rows = buildHotspotRows();
+      const row = rows.find(item => hotspotKey({ chain: item.chain, resseq: item.residueNumber }) === key);
       els.selectedHotspot.value = key;
       setColorPickerValue(els.selectedColor, hotspot.colorName);
       els.selectedHotspotSection.open = true;
-      renderHotspotTable();
-      updateLocateControl();
-      renderStructure({ preserveView: true });
+      renderHotspotTable(rows);
+      updateLocateControl(rows);
+      renderStructure({ preserveView: true, rows });
       setStatus(row?.found ? `Selected ${residueLabel(hotspot.chain, hotspot.resseq)}.` : `${residueLabel(hotspot.chain, hotspot.resseq)} is not present in this structure.`, row?.found ? 'ok' : 'warning');
     }
 
     function locateSelectedHotspot() {
       const key = els.selectedHotspot.value;
-      const row = buildHotspotRows().find(item => hotspotKey({ chain: item.chain, resseq: item.residueNumber }) === key);
+      const rows = buildHotspotRows();
+      const row = rows.find(item => hotspotKey({ chain: item.chain, resseq: item.residueNumber }) === key);
       if (!row?.found || !state.viewer) {
-        updateLocateControl();
+        updateLocateControl(rows);
         return;
       }
       state.viewer.zoomTo({ chain: row.chain, resi: String(row.residueNumber) }, 450);
@@ -665,8 +798,10 @@
         return;
       }
       setStatus(`Loading ${pdb.name}...`);
+      state.pendingLoads += 1;
+      updateGifAvailability();
       try {
-        const pdbText = await fetchPdbText(pdb);
+        const pdbText = await fetchText(pdb);
         if (requestId !== state.pdbLoadRequest) return;
         state.pdbText = pdbText;
         state.parsed = parsePdbText(state.pdbText);
@@ -684,6 +819,9 @@
         resetChainColors();
         const resetMessage = !initialLoad && clearedHotspots ? ` Cleared ${clearedHotspots} hotspot(s).` : '';
         renderAll(`Failed to load ${pdb.name}: ${error.message}.${resetMessage}`, 'error', { preserveView: false });
+      } finally {
+        state.pendingLoads -= 1;
+        updateGifAvailability();
       }
     }
 
@@ -737,11 +875,16 @@
         return;
       }
       setStatus(`Loading ${hotspotFile.name}...`);
+      state.pendingLoads += 1;
+      updateGifAvailability();
       try {
-        const text = await fetchHotspotText(hotspotFile);
+        const text = await fetchText(hotspotFile);
         addHotspotsFromText(text, hotspotFile.name, false);
       } catch (error) {
         setStatus(`Failed to load ${hotspotFile.name}: ${error.message}`, 'error');
+      } finally {
+        state.pendingLoads -= 1;
+        updateGifAvailability();
       }
     }
 
@@ -802,6 +945,7 @@
     }
 
     async function init() {
+      gifEls.exportGif.addEventListener('click', exportRotationGif);
       initThemeToggle();
       initOptions();
       els.pdbSelect.addEventListener('change', event => loadPdb(event.target.value));

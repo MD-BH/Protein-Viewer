@@ -13,6 +13,7 @@ hotspots, and keeps the generated HTML ready for direct use.
 - Per-hotspot color, deletion, and labels rendered in the 3D viewer.
 - Chain color controls for chain A and chain B.
 - Generated static HTML that does not embed full PDB contents.
+- Export a looping rotation GIF of the current structure view to `gifs/`.
 
 ## Quick Start
 
@@ -56,6 +57,7 @@ protein_viewer/
 ├── viewer_src/                  # Source HTML template, CSS, and browser JS
 ├── pdbs/                        # PDB data and generated PDB manifest
 ├── hotspots/                    # Hotspot TXT files and generated hotspot manifest
+├── gifs/                        # GIF exports, created on first save and ignored by Git
 └── tests/                       # Standard-library unittest coverage for the builder
 ```
 
@@ -81,6 +83,34 @@ A18, A200
 Use a local HTTP server rather than `file://`, because browser `fetch()` calls for
 local PDB and TXT files are not reliable from `file://`.
 
+## Rotation GIF export
+
+Start the viewer with `python build_viewer.py`, arrange the view and hotspots,
+then use **Rotation GIF → Export GIF**. The export captures only the 3D canvas,
+including its background, chain colors, hotspots, labels and selected highlight.
+It starts from the current angle, rotates once around the screen's vertical axis,
+and loops forever. Zoom and framing stay as they are; anything outside the view
+is cropped during rotation.
+
+The default is a **640 px long edge, 4 seconds per turn, 20 fps**. Choose a
+480/640/800 px long edge, 2/4/6 seconds, and 10/20 fps. The canvas aspect ratio is
+preserved. GIF uses a limited color palette, so some color quantization is normal.
+
+Structure controls are temporarily locked while exporting. Progress shows capture,
+encoding and saving; **Cancel** is available until saving starts. The original
+view and controls are restored on success, cancellation or failure.
+
+The project server creates `gifs/` on the first successful export and saves
+`PDBname-UTCtimestamp-uniqueID.gif` without overwriting existing files. A link to
+the saved file appears below the controls. `gifs/` is excluded from Git.
+Saving requires this project's server, not a generic static server or `file://`.
+Uploads are limited to 64 MiB; if exporting fails, try fewer frames or a smaller
+size and check that the server can write to the project directory.
+
+GIF encoding uses the locally bundled **gif.js 0.2.0** and Web Workers under
+`viewer_src/vendor/gif.js-0.2.0/` (MIT license included). It adds no Python runtime
+dependencies. 3Dmol.js still requires network access as before.
+
 ## Development
 
 Validate the builder and generated output:
@@ -90,6 +120,16 @@ python -m py_compile build_viewer.py
 python build_viewer.py --build-only
 python -m unittest discover tests
 ```
+
+Optional browser integration checks (development only, requires Playwright,
+its Chromium browser, and Pillow):
+
+```bash
+python tests/verify_gif_browser.py
+```
+
+This builds the page, saves a sample GIF in `gifs/`, checks its decoded frames and
+timing, and exercises cancellation, worker failures, heartbeat and save failures.
 
 The browser app source lives in `viewer_src/`. After editing `viewer_src/` or
 `build_viewer.py`, rerun:
