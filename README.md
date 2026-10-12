@@ -96,6 +96,43 @@ A18, A200
 Use a local HTTP server rather than `file://`, because browser `fetch()` calls for
 local PDB and TXT files are not reliable from `file://`.
 
+## Compare two structures
+
+Open **Structure comparison**, choose a **Comparison PDB**, and select one
+**Reference chain** and one **Comparison chain**. Click **Align and overlay**.
+The current PDB stays fixed; the second PDB is rotated and translated as a whole
+using the selected chains. Applying an alignment fits both structures into view.
+The source PDB files are never modified.
+
+The reference keeps its existing chain colors, hotspots, and draggable labels.
+The comparison is cyan by default; change its color or use the independent
+visibility checkboxes to inspect either structure. Colors and visibility preserve
+the current camera view. Hotspots and sequence editing always belong to the
+reference, even if the comparison has identical chain names and residue numbers.
+**Remove comparison** restores the reference alone. Changing either alignment
+chain invalidates the previous fit. Reloading or switching the reference clears
+the comparison; comparison state is not saved across page refreshes.
+
+Correspondence uses a global amino-acid sequence alignment (match +2, mismatch
+−1, gap −2), independent of residue numbering. A proper least-squares rigid fit
+uses corresponding Cα pairs, including substitutions, without scaling, reflection,
+or outlier removal. Only the first PDB model and conventional blank/A alternate
+locations are used; missing Cα atoms never use a different atom as a substitute.
+At least three non-collinear Cα pairs are required. Very large sequence alignments
+(over 50 million traceback cells) are rejected to protect browser memory.
+
+The result reports paired Cα count, fitted **RMSD in Å**, sequence identity among
+aligned residue pairs (excluding gaps, with unknown residues not counted as
+identical), and Cα-pair coverage of each selected chain. These describe the matched
+parts of those chains, not the entire complex. Identity below 30% adds a reminder
+that the RMSD may not be meaningful; it does not prevent viewing and is not a
+homology test. The bundled 5W78 and 7TQO structures are different proteins and
+should not be treated as a validated homologous pair.
+
+GIF export includes both currently visible structures and the reference labels.
+Loading or alignment disables export; exporting locks comparison controls. Files
+continue to use the reference PDB name. No runtime dependencies are added.
+
 ## Rotation GIF export
 
 Start the viewer with `python build_viewer.py`, arrange the view and hotspots,
@@ -157,6 +194,7 @@ its Chromium browser, and Pillow):
 
 ```bash
 python tests/verify_gif_browser.py
+python tests/verify_comparison_browser.py
 ```
 
 This builds the page, saves white- and dark-background sample GIFs in `gifs/`,
@@ -183,3 +221,13 @@ python build_viewer.py --build-only
   identifiers.
 - Browser warnings about WebGL performance in headless tests are acceptable;
   `3Dmol.js failed to load` is not.
+
+Alignment math can also be checked without a browser or packages:
+
+```bash
+node tests/test_alignment.cjs
+```
+
+The comparison browser check uses a synthetic rigid transform with a displaced
+second chain, checks model isolation and asynchronous selection changes, and
+saves a two-structure sample GIF in `gifs/`.

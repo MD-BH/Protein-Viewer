@@ -35,3 +35,19 @@ Unpinning returns it to automatic placement.
 
 **Custom label text**: Display text for one hotspot, defaulting to its residue
 identifier (such as A120). It does not change the hotspot's identity.
+
+## Structure comparison
+
+**Reference structure**: The current PDB against which another structure is
+compared. Its coordinates remain unchanged, and it owns the editable hotspots
+and labels.
+
+**Comparison structure**: A second PDB moved as a whole to align its selected
+chain with the selected reference chain. It has independent color and visibility.
+
+**Alignment RMSD**: The root mean square distance, in ångströms, between the
+matched Cα pairs after rigid alignment. It describes the fitted part of the
+selected chains, not necessarily the whole structures.
+
+**Alignment coverage**: The fraction of residues in a selected chain that
+contribute a Cα pair to the fit. Each of the two chains has its own coverage.

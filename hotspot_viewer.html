@@ -15,6 +15,7 @@
   </script>
   <script src="https://cdn.jsdelivr.net/npm/3dmol@2.5.4/build/3Dmol-min.js"></script>
   <script src="viewer_src/vendor/gif.js-0.2.0/gif.js"></script>
+  <script src="viewer_src/alignment.js"></script>
   <style>
     :root {
       color-scheme: dark;
@@ -551,7 +552,29 @@
             <button id="reloadPdb">Reload PDB</button>
             <button id="renderButton">Reset view</button>
           </div>
-          <p class="control-note warning-note">Switching or reloading a PDB clears the current hotspot list.</p>
+          <p class="control-note warning-note">Switching or reloading a PDB clears the current hotspot list and comparison.</p>
+        </div>
+      </details>
+
+      <details class="control-section" id="comparisonSection">
+        <summary>Structure comparison</summary>
+        <div class="section-body">
+          <label for="comparisonPdb">Comparison PDB</label>
+          <select id="comparisonPdb"><option value="">None</option></select>
+          <label for="referenceChain">Reference chain</label>
+          <select id="referenceChain" disabled></select>
+          <label for="comparisonChain">Comparison chain</label>
+          <select id="comparisonChain" disabled></select>
+          <div class="row action-row">
+            <button id="alignComparison" disabled>Align and overlay</button>
+            <button id="removeComparison" disabled>Remove comparison</button>
+          </div>
+          <label for="comparisonColor">Comparison color</label>
+          <select id="comparisonColor"></select>
+          <label class="label-pin"><input id="showReference" type="checkbox" checked> Show reference</label>
+          <label class="label-pin"><input id="showComparison" type="checkbox" checked> Show comparison</label>
+          <div id="comparisonLegend" class="control-note"></div>
+          <p id="comparisonStatus" class="control-note" role="status">Choose a comparison PDB and one chain from each structure.</p>
         </div>
       </details>
 
@@ -742,6 +765,7 @@
       chainColors: { A: DEFAULT_CHAIN_COLOR.name, B: DEFAULT_CHAIN_COLOR.name },
       viewer: null,
       pendingLoads: 0,
+      comparison: { request: 0, text: '', parsed: null, pdb: null, result: null, busy: false },
       labelBoxes: [],
       redrawLabels: null,
       labelBackground: null,
@@ -790,8 +814,153 @@
       'cancelGif', 'gifProgress', 'gifStatus', 'gifResult'
     ].map(id => [id, document.getElementById(id)]));
 
+    const comparisonEls = Object.fromEntries([
+      'comparisonPdb', 'referenceChain', 'comparisonChain', 'alignComparison',
+      'removeComparison', 'comparisonColor', 'showReference', 'showComparison',
+      'comparisonLegend', 'comparisonStatus'
+    ].map(id => [id, document.getElementById(id)]));
+
+    function updateComparisonControls() {
+      const c = state.comparison;
+      comparisonEls.comparisonPdb.disabled = !state.parsed || state.pendingLoads > 0;
+      comparisonEls.referenceChain.disabled = !state.parsed || state.pendingLoads > 0 || (c.busy && !c.parsed);
+      comparisonEls.comparisonChain.disabled = !c.parsed;
+      comparisonEls.alignComparison.disabled = c.busy || state.pendingLoads > 0 ||
+        !state.parsed || !c.parsed || !comparisonEls.referenceChain.value || !comparisonEls.comparisonChain.value;
+      comparisonEls.removeComparison.disabled = !c.pdb;
+      comparisonEls.comparisonLegend.replaceChildren();
+      const legend = (name, colors) => {
+        const line = document.createElement('div');
+        line.append(document.createTextNode(name + ' — '));
+        for (const [text, color] of colors) {
+          const swatch = document.createElement('span');
+          swatch.className = 'color-swatch'; swatch.style.backgroundColor = color;
+          line.append(swatch, document.createTextNode(text + ' '));
+        }
+        comparisonEls.comparisonLegend.append(line);
+      };
+      if (state.parsed) legend('Reference: ' + state.pdbs[state.pdbIndex].name,
+        [...state.parsed.chains.keys()].map(chain => {
+          const color = COLORABLE_CHAINS.includes(chain) ? chainColorByName(state.chainColors[chain]) : {name:'Gray',hex:'#cbd5e1'};
+          return [`${chain} ${color.name}`,color.hex];
+        }));
+      if (c.result) legend('Comparison: ' + c.pdb.name,
+        [[comparisonEls.comparisonColor.selectedOptions[0].text, comparisonEls.comparisonColor.value]]);
+    }
+
+    function fillComparisonChains(select, parsed) {
+      select.replaceChildren();
+      for (const chain of parsed?.chains.keys() || []) select.add(new Option(chain, chain));
+    }
+
+    function clearComparisonResult() {
+      state.comparison.request++;
+      state.comparison.busy = false;
+      state.comparison.result = null;
+      comparisonEls.comparisonStatus.textContent = 'Choose chains, then align and overlay.';
+      comparisonEls.comparisonStatus.classList.remove('warning-note');
+      updateGifAvailability();
+      renderStructure({ preserveView: true });
+    }
+
+    function resetComparison() {
+      const c = state.comparison;
+      c.request++;
+      Object.assign(c, {text:'', parsed:null, pdb:null, result:null, busy:false});
+      comparisonEls.comparisonPdb.value = '';
+      comparisonEls.comparisonChain.replaceChildren();
+      comparisonEls.showReference.checked = comparisonEls.showComparison.checked = true;
+      comparisonEls.comparisonStatus.textContent = 'Choose a comparison PDB and one chain from each structure.';
+      comparisonEls.comparisonStatus.classList.remove('warning-note');
+      updateGifAvailability();
+    }
+
+    async function loadComparison() {
+      if (state.gifExportBusy) return;
+      const value = comparisonEls.comparisonPdb.value;
+      resetComparison();
+      comparisonEls.comparisonPdb.value = value;
+      renderStructure({ preserveView: true });
+      if (!value) return;
+      const c = state.comparison, request = ++c.request;
+      c.pdb = state.pdbs[Number(value)];
+      c.busy = true;
+      comparisonEls.comparisonStatus.textContent = 'Loading comparison…';
+      updateGifAvailability();
+      try {
+        const text = await fetchText(c.pdb);
+        if (request !== c.request) return;
+        c.text = text;
+        c.parsed = parsePdbText(text);
+        if (!c.parsed.chains.size) throw new Error('No protein residues found in comparison PDB.');
+        fillComparisonChains(comparisonEls.comparisonChain, c.parsed);
+        comparisonEls.comparisonStatus.textContent = 'Choose chains, then align and overlay.';
+      } catch (error) {
+        if (request !== c.request) return;
+        c.parsed = null;
+        comparisonEls.comparisonStatus.textContent = `Comparison failed: ${error.message}`;
+      } finally {
+        if (request === c.request) { c.busy = false; updateGifAvailability(); }
+      }
+    }
+
+    async function alignComparison() {
+      const c = state.comparison;
+      if (c.busy || state.pendingLoads || state.gifExportBusy || !state.parsed || !c.parsed) return;
+      const initialView = state.viewer?.getView().slice();
+      clearComparisonResult();
+      const request = c.request;
+      const check = () => { if (request !== c.request) throw new DOMException('Selection changed', 'AbortError'); };
+      c.busy = true;
+      comparisonEls.comparisonStatus.textContent = 'Aligning sequences and fitting Cα pairs…';
+      updateGifAvailability();
+      try {
+        const matched = await ProteinAlignment.matchResidues(
+          state.parsed.chains.get(comparisonEls.referenceChain.value) || [],
+          c.parsed.chains.get(comparisonEls.comparisonChain.value) || [], check);
+        const fit = await ProteinAlignment.fit(matched.pairs, check);
+        check();
+        c.result = { ...fit, count: matched.pairs.length, identity: matched.identity,
+          referenceCoverage: matched.referenceCoverage, comparisonCoverage: matched.comparisonCoverage };
+        const pct = value => `${(100*value).toFixed(1)}%`;
+        comparisonEls.comparisonStatus.textContent = `${c.result.count} Cα pairs · RMSD ${fit.rmsd.toFixed(3)} Å · ` +
+          `Sequence identity ${pct(matched.identity)} · Coverage: reference ${pct(matched.referenceCoverage)}, comparison ${pct(matched.comparisonCoverage)}. ` +
+          'Metrics describe only the matched parts of the selected chains; sequence identity alone does not establish homology.' +
+          (matched.identity < 0.3 ? ' Low sequence identity: this RMSD may not represent a meaningful comparison. The 30% threshold is a practical reminder, not a homology test.' : '');
+        comparisonEls.comparisonStatus.classList.toggle('warning-note', matched.identity < 0.3);
+        renderStructure({ preserveView: false });
+      } catch (error) {
+        if (request === c.request) {
+          const hadResult = Boolean(c.result);
+          c.result = null;
+          if (hadResult) {
+            renderStructure({ preserveView: false });
+            if (initialView) state.viewer.setView(initialView);
+          }
+          comparisonEls.comparisonStatus.textContent = `Alignment failed: ${error.message}`;
+        }
+      } finally {
+        if (request === c.request) { c.busy = false; updateGifAvailability(); }
+      }
+    }
+
+    function initComparison() {
+      for (const color of COLORS) comparisonEls.comparisonColor.add(new Option(color.name, color.hex));
+      comparisonEls.comparisonColor.value = '#58C9D2';
+      comparisonEls.comparisonPdb.addEventListener('change', loadComparison);
+      comparisonEls.alignComparison.addEventListener('click', alignComparison);
+      comparisonEls.removeComparison.addEventListener('click', () => {
+        resetComparison(); renderStructure({ preserveView: true });
+      });
+      for (const el of [comparisonEls.referenceChain, comparisonEls.comparisonChain]) el.addEventListener('change', clearComparisonResult);
+      for (const el of [comparisonEls.comparisonColor, comparisonEls.showReference, comparisonEls.showComparison])
+        el.addEventListener('change', () => { renderStructure({ preserveView: true }); updateLocateControl(); });
+    }
+
     function updateGifAvailability() {
-      gifEls.exportGif.disabled = state.gifExportBusy || state.pendingLoads > 0 || !state.viewer;
+      gifEls.exportGif.disabled = state.gifExportBusy || state.pendingLoads > 0 || state.comparison.busy || !state.viewer ||
+        (!comparisonEls.showReference.checked && !(state.comparison.result && comparisonEls.showComparison.checked));
+      updateComparisonControls();
     }
 
     function encodeGif(encoder, signal) {
@@ -833,7 +1002,7 @@
     async function exportRotationGif() {
       if (state.gifExportBusy) return;
       const viewer = state.viewer;
-      if (!viewer || state.pendingLoads || viewer.isAnimated()) {
+      if (!viewer || state.pendingLoads || state.comparison.busy || viewer.isAnimated()) {
         gifEls.gifStatus.textContent = 'Wait for the structure to finish loading or moving, then export.';
         return;
       }
@@ -1163,9 +1332,11 @@
       const chains = new Map();
 
       for (const line of pdbText.split(/\r?\n/)) {
+        if (line.startsWith('ENDMDL')) break;
         if (!line.startsWith('ATOM')) continue;
+        if (![' ', 'A'].includes(line.charAt(16))) continue;
         const resname3 = (line.slice(17, 20).trim().toUpperCase() || 'UNK');
-        const chain = (line.slice(21, 22).trim().toUpperCase() || '_');
+        const chain = (line.slice(21, 22).trim() || '_');
         const resseqText = line.slice(22, 26).trim();
         const icode = line.slice(26, 27).trim().toUpperCase();
         const atomName = line.slice(12, 16).trim().toUpperCase();
@@ -1180,7 +1351,10 @@
         const coord = { x, y, z };
         if (residues.has(key)) {
           if (atomName === 'CA') {
-            residues.get(key).coord = coord;
+            if (!residues.get(key).ca) {
+              residues.get(key).coord = coord;
+              residues.get(key).ca = coord;
+            }
           }
           continue;
         }
@@ -1192,6 +1366,7 @@
           residueId: residueLabel(chain, resseq, icode),
           resname3,
           resname1: AA3_TO_AA1[resname3] || 'X',
+          ca: atomName === 'CA' ? coord : null,
           coord
         };
         residues.set(key, residue);
@@ -1375,7 +1550,7 @@
       const selectedKey = els.selectedHotspot.value;
       const row = rows.find(item => hotspotKey({ chain: item.chain, resseq: item.residueNumber }) === selectedKey);
       const canLocate = Boolean(row?.found);
-      els.locateHotspot.disabled = !canLocate;
+      els.locateHotspot.disabled = !canLocate || !comparisonEls.showReference.checked;
       els.locateNote.hidden = !selectedKey || canLocate;
       els.locateNote.textContent = selectedKey && !canLocate
         ? 'This residue is not present in the loaded structure.'
@@ -1511,6 +1686,7 @@
       ctx.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
       ctx.clearRect(0, 0, width, height);
       state.labelBoxes = [];
+      if (!comparisonEls.showReference.checked) return;
       // 3Dmol returns page coordinates, while this layer uses canvas-local pixels.
       const local = point => ({ x: point.x - bounds.left - window.scrollX,
         y: point.y - bounds.top - window.scrollY });
@@ -1633,17 +1809,17 @@
       }
       const viewer = $3Dmol.createViewer(els.viewer, { backgroundColor: viewerBackgroundColor() });
       state.viewer = viewer;
-      viewer.addModel(state.pdbText, 'pdb');
-      viewer.setStyle({}, { cartoon: { color: '#cbd5e1' } });
+      const reference = viewer.addModel(state.pdbText, 'pdb');
+      viewer.setStyle({ model: reference }, { cartoon: { color: '#cbd5e1' } });
       for (const chain of COLORABLE_CHAINS) {
         if (!state.parsed.chains.has(chain)) continue;
         const color = chainColorByName(state.chainColors[chain]);
-        viewer.setStyle({ chain }, { cartoon: { color: color.hex } });
+        viewer.setStyle({ model: reference, chain }, { cartoon: { color: color.hex } });
       }
-      viewer.addStyle({ hetflag: true }, { stick: { color: '#9ca3af', radius: 0.16 } });
+      viewer.addStyle({ model: reference, hetflag: true }, { stick: { color: '#9ca3af', radius: 0.16 } });
       for (const row of rows) {
         if (!row.found) continue;
-        const selector = { chain: row.chain, resi: String(row.residueNumber) };
+        const selector = { model: reference, chain: row.chain, resi: String(row.residueNumber) };
         const selected = hotspotKey({ chain: row.chain, resseq: row.residueNumber }) === els.selectedHotspot.value;
         if (selected) {
           viewer.addStyle(selector, { sphere: { color: '#f1c75b', scale: 0.72, opacity: 0.88 } });
@@ -1651,17 +1827,30 @@
         viewer.addStyle(selector, { stick: { color: row.colorHex, radius: 0.28 } });
         viewer.addStyle(selector, { sphere: { color: row.colorHex, scale: 0.36 } });
       }
+      const visibleModels = [];
+      if (comparisonEls.showReference.checked) visibleModels.push(reference);
+      else reference.hide();
+      if (state.comparison.result) {
+        const comparison = viewer.addModel(state.comparison.text, 'pdb');
+        for (const atom of comparison.selectedAtoms({})) Object.assign(atom, state.comparison.result.transform(atom));
+        comparison.setStyle({}, { cartoon: { color: comparisonEls.comparisonColor.value } });
+        viewer.addStyle({ model: comparison, hetflag: true }, { stick: { color: comparisonEls.comparisonColor.value, radius: 0.16 } });
+        if (comparisonEls.showComparison.checked) visibleModels.push(comparison);
+        else comparison.hide();
+      }
       // Render the annotations after WebGL, without triggering another viewer render.
-      const structureCoords = viewer.selectedAtoms({}).map(({ x, y, z }) => ({ x, y, z }));
+      const structureCoords = viewer.selectedAtoms({ model: visibleModels }).map(({ x, y, z }) => ({ x, y, z }));
       state.redrawLabels = () => drawHotspotLabels(viewer, rows, structureCoords);
       viewer.setViewChangeCallback(state.redrawLabels);
 
       if (previousView && typeof viewer.setView === 'function') {
         viewer.setView(previousView);
       } else {
-        viewer.zoomTo();
+        if (visibleModels.length) viewer.zoomTo({ model: visibleModels });
       }
       viewer.render();
+      const name = state.pdbs[state.pdbIndex]?.name || 'No PDB';
+      els.viewerTitle.textContent = state.comparison.result ? `${name} + ${state.comparison.pdb.name}` : name;
       updateGifAvailability();
     }
 
@@ -1674,7 +1863,7 @@
       renderStructure({ preserveView, rows });
       if (message) setStatus(message, kind);
       const pdbName = state.pdbs[state.pdbIndex]?.name || 'No PDB';
-      els.viewerTitle.textContent = pdbName;
+      els.viewerTitle.textContent = state.comparison.result ? `${pdbName} + ${state.comparison.pdb.name}` : pdbName;
       els.viewerMeta.textContent = `${state.hotspots.length} hotspot(s), one active 3Dmol viewer`;
     }
 
@@ -1699,16 +1888,18 @@
       const key = els.selectedHotspot.value;
       const rows = buildHotspotRows();
       const row = rows.find(item => hotspotKey({ chain: item.chain, resseq: item.residueNumber }) === key);
-      if (!row?.found || !state.viewer) {
+      if (!row?.found || !state.viewer || !comparisonEls.showReference.checked) {
         updateLocateControl(rows);
         return;
       }
-      state.viewer.zoomTo({ chain: row.chain, resi: String(row.residueNumber) }, 450);
+      state.viewer.zoomTo({ model: 0, chain: row.chain, resi: String(row.residueNumber) }, 450);
       state.viewer.render();
       setStatus(`Centered on ${row.hotspot}.`);
     }
 
     async function loadPdb(index, { initialLoad = false } = {}) {
+      resetComparison();
+      comparisonEls.referenceChain.replaceChildren();
       const requestId = ++state.pdbLoadRequest;
       const clearedHotspots = state.hotspots.length;
       state.pdbIndex = Number(index) || 0;
@@ -1729,6 +1920,7 @@
         if (requestId !== state.pdbLoadRequest) return;
         state.pdbText = pdbText;
         state.parsed = parsePdbText(state.pdbText);
+        fillComparisonChains(comparisonEls.referenceChain, state.parsed);
         state.hotspots = [];
         resetChainColors();
         const residueCount = state.parsed.residues.size;
@@ -1849,6 +2041,7 @@
       els.pdbSelect.innerHTML = '';
       for (let i = 0; i < state.pdbs.length; i += 1) {
         els.pdbSelect.add(new Option(state.pdbs[i].name, String(i)));
+        comparisonEls.comparisonPdb.add(new Option(state.pdbs[i].name, String(i)));
       }
       els.pdbSelect.disabled = !state.pdbs.length;
     }
@@ -1872,6 +2065,7 @@
       gifEls.exportGif.addEventListener('click', exportRotationGif);
       initThemeToggle();
       initLabelEditing();
+      initComparison();
       initOptions();
       els.pdbSelect.addEventListener('change', event => loadPdb(event.target.value));
       els.addHotspots.addEventListener('click', addHotspots);

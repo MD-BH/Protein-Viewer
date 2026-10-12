@@ -15,6 +15,7 @@
   </script>
   <script src="https://cdn.jsdelivr.net/npm/3dmol@2.5.4/build/3Dmol-min.js"></script>
   <script src="viewer_src/vendor/gif.js-0.2.0/gif.js"></script>
+  <script src="viewer_src/alignment.js"></script>
   <style>
 {{VIEWER_STYLES}}
   </style>
@@ -36,7 +37,29 @@
             <button id="reloadPdb">Reload PDB</button>
             <button id="renderButton">Reset view</button>
           </div>
-          <p class="control-note warning-note">Switching or reloading a PDB clears the current hotspot list.</p>
+          <p class="control-note warning-note">Switching or reloading a PDB clears the current hotspot list and comparison.</p>
+        </div>
+      </details>
+
+      <details class="control-section" id="comparisonSection">
+        <summary>Structure comparison</summary>
+        <div class="section-body">
+          <label for="comparisonPdb">Comparison PDB</label>
+          <select id="comparisonPdb"><option value="">None</option></select>
+          <label for="referenceChain">Reference chain</label>
+          <select id="referenceChain" disabled></select>
+          <label for="comparisonChain">Comparison chain</label>
+          <select id="comparisonChain" disabled></select>
+          <div class="row action-row">
+            <button id="alignComparison" disabled>Align and overlay</button>
+            <button id="removeComparison" disabled>Remove comparison</button>
+          </div>
+          <label for="comparisonColor">Comparison color</label>
+          <select id="comparisonColor"></select>
+          <label class="label-pin"><input id="showReference" type="checkbox" checked> Show reference</label>
+          <label class="label-pin"><input id="showComparison" type="checkbox" checked> Show comparison</label>
+          <div id="comparisonLegend" class="control-note"></div>
+          <p id="comparisonStatus" class="control-note" role="status">Choose a comparison PDB and one chain from each structure.</p>
         </div>
       </details>
 
