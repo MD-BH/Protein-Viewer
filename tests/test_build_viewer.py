@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import subprocess
+import io
 import sys
 import tempfile
 import threading
 import unittest
+from http.client import HTTPConnection
 from pathlib import Path
 from unittest import mock
 from urllib.error import HTTPError
@@ -18,6 +20,101 @@ import build_viewer as builder  # noqa: E402
 
 
 class ViewerBuildTests(unittest.TestCase):
+    def test_browser_launcher_skips_terminal_browsers_and_handles_failures(self) -> None:
+        with mock.patch.object(builder.webbrowser, "get") as get_browser, \
+                mock.patch.object(builder.webbrowser, "open") as fallback, \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as output:
+            browser = mock.Mock()
+            get_browser.return_value = browser
+            for name in ("w3m", "lynx", "links", "links2", "elinks", "www-browser"):
+                browser.name = name
+                builder.open_viewer_browser("http://127.0.0.1:8766/")
+            browser.open.assert_not_called()
+            with tempfile.TemporaryDirectory() as tmp:
+                target = Path(tmp) / "w3m"
+                target.touch()
+                alias = Path(tmp) / "custom-browser"
+                alias.symlink_to(target)
+                browser.name = str(alias)
+                builder.open_viewer_browser("http://127.0.0.1:8766/")
+                browser.open.assert_not_called()
+            browser.name = "/missing/browser-helper"
+            browser.open.return_value = False
+            builder.open_viewer_browser("http://127.0.0.1:8766/")
+            browser.open.side_effect = OSError("launcher missing")
+            builder.open_viewer_browser("http://127.0.0.1:8766/")
+            get_browser.side_effect = builder.webbrowser.Error("no browser")
+            builder.open_viewer_browser("http://127.0.0.1:8766/")
+            fallback.assert_not_called()
+            self.assertIn("Open manually", output.getvalue())
+            self.assertIn("http://127.0.0.1:8766/", output.getvalue())
+
+    def test_browser_launch_never_blocks_http_serving(self) -> None:
+        for mode in ("blocking", "failed", "terminal", "disabled"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "hotspot_viewer.html").write_text("viewer", encoding="utf-8")
+                server = builder.create_viewer_server("127.0.0.1", 0, root, builder.ViewerSessions())
+                started = threading.Event()
+                opened = threading.Event()
+                release = threading.Event()
+                result = []
+                errors = []
+                original_serve = server.serve_forever
+
+                def serve_forever():
+                    started.set()
+                    original_serve(poll_interval=0.01)
+
+                def open_browser(url):
+                    try:
+                        if mode == "failed":
+                            return False
+                        with urlopen(url, timeout=1) as response:
+                            result.append(response.read())
+                        result.append(threading.current_thread().daemon)
+                    except Exception as exc:
+                        result.append(exc)
+                    finally:
+                        opened.set()
+                    release.wait(timeout=3)
+                    return True
+
+                def run():
+                    try:
+                        builder.serve("127.0.0.1", 0, open_browser=mode != "disabled")
+                    except BaseException as exc:
+                        errors.append(exc)
+
+                browser = mock.Mock()
+                browser.name = "w3m" if mode == "terminal" else "/test/desktop-browser"
+                browser.open.side_effect = open_browser
+                with mock.patch.object(builder, "create_viewer_server", return_value=server), \
+                        mock.patch.object(server, "serve_forever", side_effect=serve_forever), \
+                        mock.patch.object(builder.webbrowser, "get", return_value=browser) as get_browser:
+                    thread = threading.Thread(target=run, daemon=True)
+                    thread.start()
+                    try:
+                        self.assertTrue(started.wait(timeout=3), "HTTP loop must start independently of the browser")
+                        with urlopen(f"http://127.0.0.1:{server.server_port}/hotspot_viewer.html", timeout=2) as response:
+                            self.assertEqual(response.read(), b"viewer")
+                        if mode in ("blocking", "failed"):
+                            self.assertTrue(opened.wait(timeout=3))
+                        if mode == "blocking":
+                            self.assertEqual(result, [b"viewer", True])
+                        if mode == "disabled":
+                            get_browser.assert_not_called()
+                        if mode in ("terminal", "disabled"):
+                            browser.open.assert_not_called()
+                    finally:
+                        release.set()
+                        if started.wait(timeout=3):
+                            server.shutdown()
+                        thread.join(timeout=3)
+                        server.server_close()
+                    self.assertFalse(thread.is_alive())
+                    self.assertEqual(errors, [])
+
     def test_build_manifest_sorts_matching_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp)
@@ -101,6 +198,8 @@ class ViewerBuildTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "index.html").write_text("viewer", encoding="utf-8")
+            (root / "hotspot_viewer.html").write_text("protein viewer", encoding="utf-8")
+            (root / "asset.txt").write_text("asset", encoding="utf-8")
             now = [0.0]
             sessions = builder.ViewerSessions(clock=lambda: now[0])
             server = builder.create_viewer_server("127.0.0.1", 0, root, sessions)
@@ -115,6 +214,23 @@ class ViewerBuildTests(unittest.TestCase):
             monitor.start()
             base_url = f"http://127.0.0.1:{server.server_address[1]}"
             try:
+                connection = HTTPConnection("127.0.0.1", server.server_address[1], timeout=2)
+                try:
+                    for method in ("GET", "HEAD"):
+                        for path in ("/", "/?from=forwarded-port"):
+                            connection.request(method, path)
+                            response = connection.getresponse()
+                            self.assertEqual(response.status, 302)
+                            self.assertEqual(response.getheader("Location"), "hotspot_viewer.html")
+                            self.assertEqual(response.read(), b"")
+                finally:
+                    connection.close()
+                for path in ("/", "/hotspot_viewer.html"):
+                    with urlopen(base_url + path) as response:
+                        self.assertEqual(response.geturl(), base_url + "/hotspot_viewer.html")
+                        self.assertEqual(response.read(), b"protein viewer")
+                with urlopen(base_url + "/asset.txt") as response:
+                    self.assertEqual(response.read(), b"asset")
                 with urlopen(f"{base_url}/index.html") as response:
                     self.assertEqual(response.read(), b"viewer")
                 heartbeat = Request(

@@ -26,8 +26,11 @@ python protein_viewer/build_viewer.py
 Then open:
 
 ```text
-http://127.0.0.1:8766/hotspot_viewer.html
+http://127.0.0.1:8766/
 ```
+
+The root address redirects directly to the viewer, including when opening a
+VS Code forwarded port. The `/hotspot_viewer.html` address still works.
 
 The local server stops 15 seconds after the last open viewer page closes. If the
 browser cannot send a close signal, the server stops after 60 seconds without a
@@ -47,6 +50,16 @@ python build_viewer.py --no-browser
 python build_viewer.py --port 8766
 python build_viewer.py --host 127.0.0.1
 ```
+
+Browser auto-opening runs separately from the HTTP server, so a slow or blocked
+browser launcher cannot prevent the page from loading. Terminal browsers such as
+`w3m` are skipped because the viewer needs WebGL. If auto-opening fails, open the
+printed URL in a desktop browser, or start with `--no-browser` to skip the launcher.
+
+When running through remote VS Code, forward port **8766** in the **Ports** panel
+and open the forwarded URL in your local desktop browser. If VS Code assigns a
+different local port, use the URL shown in that panel. A stale `BROWSER` environment
+variable can prevent auto-opening, but does not prevent the server from responding.
 
 ## Project Layout
 

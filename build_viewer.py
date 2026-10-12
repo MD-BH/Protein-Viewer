@@ -6,6 +6,7 @@ import functools
 import http.server
 import json
 import re
+import shutil
 import sys
 import threading
 import time
@@ -155,6 +156,15 @@ class ViewerRequestHandler(http.server.SimpleHTTPRequestHandler):
         self.viewer_sessions = sessions
         super().__init__(*args, directory=directory, **kwargs)
 
+    def send_head(self):
+        if urlsplit(self.path).path == "/":
+            self.send_response(302)
+            self.send_header("Location", "hotspot_viewer.html")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return None
+        return super().send_head()
+
     def _is_same_origin_request(self) -> bool:
         site = self.headers.get("Sec-Fetch-Site")
         if site and site != "same-origin":
@@ -292,11 +302,27 @@ def monitor_viewer_sessions(httpd: ViewerHTTPServer, sessions: ViewerSessions, s
             return
 
 
+def open_viewer_browser(url: str) -> None:
+    try:
+        browser = webbrowser.get()
+        name = getattr(browser, "name", "")
+        names = {Path(name).name.lower(), Path(shutil.which(name) or name).resolve().name.lower()}
+        if names & {"w3m", "lynx", "links", "links2", "elinks", "www-browser"}:
+            print(f"Skipping terminal browser. Open in a desktop browser: {url}")
+            return
+        # Open only the selected controller: webbrowser.open() can fall back to w3m.
+        if browser.open(url):
+            return
+    except (webbrowser.Error, OSError) as exc:
+        print(f"Could not open a browser: {exc}")
+    print(f"Open manually in a desktop browser: {url}")
+
+
 def serve(host: str, port: int, open_browser: bool) -> None:
-    url = f"http://{host}:{port}/hotspot_viewer.html"
     try:
         sessions = ViewerSessions()
         with create_viewer_server(host, port, ROOT, sessions) as httpd:
+            url = f"http://{host}:{httpd.server_port}/hotspot_viewer.html"
             stop_monitor = threading.Event()
             monitor = threading.Thread(
                 target=monitor_viewer_sessions,
@@ -309,7 +335,7 @@ def serve(host: str, port: int, open_browser: bool) -> None:
             print("Press Ctrl+C to stop.")
             try:
                 if open_browser:
-                    webbrowser.open(url)
+                    threading.Thread(target=open_viewer_browser, args=(url,), daemon=True).start()
                 httpd.serve_forever()
             finally:
                 stop_monitor.set()
