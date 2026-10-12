@@ -1,29 +1,47 @@
-# protein_viewer
+# Protein Hotspot Viewer
 
-Standalone browser-based PDB hotspot viewer for inspecting protein structures with
-3Dmol.js. The app loads local PDB files through a small Python build/server script,
-lets you add residue hotspots such as `A128`, colors chains and individual
-hotspots, and keeps the generated HTML ready for direct use.
+Inspect local PDB structures, highlight residues, and compare two proteins in a
+browser. Arrange editable hotspot labels, then save the current view as a PNG or
+a looping rotation GIF. Runs with a small Python server and 3Dmol.js, with no
+additional Python runtime dependencies.
+
+![Light interface showing 5W78 with cyan and gray chains, three highlighted residues, and editable labels connected by leader lines.](docs/images/viewer-light.png)
+
+*Light mode — chain colors, highlighted residues, and custom labels with leader lines.*
+
+![Dark interface showing the same 5W78 structure, camera angle, and hotspot labels against a dark canvas.](docs/images/viewer-dark.png)
+
+*Dark mode — the same structure and view. These example residues illustrate the
+interface; their selection does not imply a biological function.*
 
 ## Features
 
-- Dynamic PDB selection from `pdbs/manifest.json`.
-- Dynamic hotspot TXT import from `hotspots/manifest.json`.
-- Manual hotspot input supporting forms such as `A128`, `A:128`, and `A 128`.
-- Per-hotspot color, deletion, and labels rendered in the 3D viewer.
-- Chain color controls for chain A and chain B.
-- Generated static HTML that does not embed full PDB contents.
-- Export a looping rotation GIF of the current structure view to `gifs/`.
+- **Explore local structures:** switch between PDB files, rotate and zoom, and
+  choose colors for chains A and B. Light and dark themes include the 3D canvas.
+- **Highlight residues:** enter hotspots such as `A128`, `A:128`, or `A 128`,
+  or import a TXT list. Change individual colors, locate residues, or delete them.
+- **Arrange labels:** drag a label to pin its position, customize its text, or
+  return it to automatic placement. Thin leader lines point to each hotspot.
+- **Compare two PDBs:** align one chain from each structure and overlay both
+  models, with independent visibility and comparison color. Inspect fitted
+  Cα-pair count, RMSD, sequence identity, and chain coverage.
+- **Save the view:** capture a full-resolution PNG or export a looping rotation
+  GIF with a white or dark background, including visible structures and labels.
+- **Keep files local:** PDB data loads on demand without being embedded in the
+  generated HTML. Exports are saved inside the project and ignored by Git.
 
 ## Quick Start
 
-From the parent directory:
+From the repository directory, with **Python 3.11+** and a WebGL-capable browser:
 
 ```bash
-python protein_viewer/build_viewer.py
+python build_viewer.py
 ```
 
-Then open:
+The server opens the viewer automatically when a desktop browser is available.
+Internet access is needed to load 3Dmol.js from jsDelivr.
+
+Or open the local address:
 
 ```text
 http://127.0.0.1:8766/
@@ -35,12 +53,6 @@ VS Code forwarded port. The `/hotspot_viewer.html` address still works.
 The local server stops 15 seconds after the last open viewer page closes. If the
 browser cannot send a close signal, the server stops after 60 seconds without a
 viewer heartbeat. With `--no-browser`, it waits for the first viewer page to open.
-
-From inside the repository:
-
-```bash
-python build_viewer.py
-```
 
 Useful options:
 
@@ -68,10 +80,12 @@ protein_viewer/
 ├── build_viewer.py              # Builds manifests/HTML and optionally serves locally
 ├── hotspot_viewer.html          # Generated viewer kept for immediate use
 ├── viewer_src/                  # Source HTML template, CSS, and browser JS
+├── docs/images/                 # Interface screenshots displayed in this README
 ├── pdbs/                        # PDB data and generated PDB manifest
 ├── hotspots/                    # Hotspot TXT files and generated hotspot manifest
 ├── gifs/                        # GIF exports, created on first save and ignored by Git
-└── tests/                       # Standard-library unittest coverage for the builder
+├── screenshots/                 # PNG exports, created on first save and ignored by Git
+└── tests/                       # Server, alignment, and browser regression checks
 ```
 
 `hotspot_viewer.html`, `pdbs/manifest.json`, and `hotspots/manifest.json` are
@@ -95,6 +109,19 @@ A18, A200
 
 Use a local HTTP server rather than `file://`, because browser `fetch()` calls for
 local PDB and TXT files are not reliable from `file://`.
+
+## Hotspot labels
+
+Labels sit outside the structure where space allows, with thin lines pointing to
+their hotspots. They follow rotation and zoom without changing the framing.
+Drag a label to pin it at a position in the canvas; the leader line still follows
+its hotspot. In **Selected hotspot**, edit **Label text** (single line, up to 80
+characters) or uncheck **Fixed position** to return to automatic layout. Blank
+text restores the residue number. Long labels are shortened with an ellipsis.
+Pinned labels may overlap; automatic labels avoid them. Label settings are included
+in GIFs and last until the hotspot is deleted, cleared, or its PDB/page is reloaded.
+Off-screen hotspots are not labeled; crowded views prioritize the selected
+hotspot and omit labels that cannot fit. Lines adapt to the page or GIF background.
 
 ## Compare two structures
 
@@ -157,16 +184,6 @@ Errors restore the button without changing your current view.
 Start the viewer with `python build_viewer.py`, arrange the view and hotspots,
 then use **Rotation GIF → Export GIF**. The export captures the structure view without page controls,
 including chain colors, hotspots, leader-line labels and selected highlight.
-Labels sit outside the structure where space allows, with thin lines pointing to
-their hotspots. They follow rotation and zoom without changing the framing.
-Drag a label to pin it at a position in the canvas; the leader line still follows
-its hotspot. In **Selected hotspot**, edit **Label text** (single line, up to 80
-characters) or uncheck **Fixed position** to return to automatic layout. Blank
-text restores the residue number. Long labels are shortened with an ellipsis.
-Pinned labels may overlap; automatic labels avoid them. Label settings are included
-in GIFs and last until the hotspot is deleted, cleared, or its PDB/page is reloaded.
-Off-screen hotspots are not labeled; crowded views prioritize the selected
-hotspot and omit labels that cannot fit. Lines adapt to the page or GIF background.
 It starts from the current angle, rotates once around the screen's vertical axis,
 and loops forever. Zoom and framing stay as they are; anything outside the view
 is cropped during rotation.
