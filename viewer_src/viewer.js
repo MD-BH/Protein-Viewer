@@ -70,7 +70,7 @@
     const THEME_STORAGE_KEY = document.documentElement.dataset.themeStorageKey || 'protein-viewer-theme';
 
     const gifEls = Object.fromEntries([
-      'gifSize', 'gifDuration', 'gifFps', 'gifSettings', 'exportGif',
+      'gifSize', 'gifDuration', 'gifFps', 'gifBackground', 'gifSettings', 'exportGif',
       'cancelGif', 'gifProgress', 'gifStatus', 'gifResult'
     ].map(id => [id, document.getElementById(id)]));
 
@@ -128,6 +128,8 @@
       const size = Number(gifEls.gifSize.value);
       const seconds = Number(gifEls.gifDuration.value);
       const fps = Number(gifEls.gifFps.value);
+      const background = gifEls.gifBackground.value;
+      if (!['#ffffff', '#071019'].includes(background)) return;
       if (![480, 640, 800].includes(size) || ![2, 4, 6].includes(seconds) || ![10, 20].includes(fps)) return;
       const initialView = viewer.getView().slice();
       const originalStyle = els.viewer.getAttribute('style');
@@ -149,6 +151,7 @@
       gifEls.gifResult.hidden = true;
       gifEls.gifStatus.textContent = 'Capturing rotation…';
       try {
+        viewer.setBackgroundColor(background, 1);
         // Freeze the viewport aspect ratio even if the browser window is resized.
         els.viewer.style.width = `${bounds.width}px`;
         els.viewer.style.height = `${bounds.height}px`;
@@ -217,6 +220,7 @@
         if (originalStyle === null) els.viewer.removeAttribute('style');
         else els.viewer.setAttribute('style', originalStyle);
         try {
+          viewer.setBackgroundColor(viewerBackgroundColor(), 1);
           viewer.resize();
           viewer.setView(initialView);
           viewer.render();
@@ -235,6 +239,10 @@
       return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
     }
 
+    function viewerBackgroundColor() {
+      return getComputedStyle(document.documentElement).getPropertyValue('--viewer').trim();
+    }
+
     function updateThemeToggle() {
       const targetTheme = currentTheme() === 'dark' ? 'light' : 'dark';
       const action = 'Switch to ' + targetTheme + ' theme';
@@ -250,6 +258,7 @@
         localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
       } catch {}
       updateThemeToggle();
+      state.viewer?.setBackgroundColor(viewerBackgroundColor(), 1);
     }
 
     function initThemeToggle() {
@@ -696,14 +705,14 @@
         state.viewer = null;
       }
       if (!state.parsed || !state.pdbText) {
-        els.viewer.innerHTML = '<div class="empty" style="padding: 18px; color: #cbd5e1;">No PDB loaded.</div>';
+        els.viewer.innerHTML = '<div class="empty">No PDB loaded.</div>';
         return;
       }
       if (!window.$3Dmol) {
-        els.viewer.innerHTML = '<div class="empty" style="padding: 18px; color: #fecaca;">3Dmol.js is not loaded. Check network access to jsDelivr.</div>';
+        els.viewer.innerHTML = '<div class="empty" style="color: var(--danger);">3Dmol.js is not loaded. Check network access to jsDelivr.</div>';
         return;
       }
-      const viewer = $3Dmol.createViewer(els.viewer, { backgroundColor: '#071019' });
+      const viewer = $3Dmol.createViewer(els.viewer, { backgroundColor: viewerBackgroundColor() });
       state.viewer = viewer;
       viewer.addModel(state.pdbText, 'pdb');
       viewer.setStyle({}, { cartoon: { color: '#cbd5e1' } });

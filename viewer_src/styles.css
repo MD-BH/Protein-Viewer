@@ -39,6 +39,13 @@
     }
     :root[data-theme="light"] {
       color-scheme: light;
+      --viewer: #FFFFFF;
+      --viewer-ink: var(--ink);
+      --viewer-muted: var(--muted);
+      --viewer-control: var(--control);
+      --viewer-control-border: var(--control-border);
+      --viewer-control-hover: var(--hover-surface);
+      --stage-border: var(--line);
       --ink: #1E3035;
       --muted: #50666B;
       --line: #BCCBC8;
@@ -455,11 +462,11 @@
       white-space: nowrap;
     }
     button.theme-toggle:hover:not(:disabled) {
-      border-color: #50697A;
+      border-color: var(--hover-border);
       background: var(--viewer-control-hover);
       color: var(--viewer-ink);
     }
-    button.theme-toggle:focus-visible { outline-color: #42D6CF; }
+    button.theme-toggle:focus-visible { outline-color: var(--accent); }
     .theme-icon { width: 15px; height: 15px; flex: 0 0 15px; }
     .theme-icon-moon { display: none; }
     :root[data-theme="light"] .theme-icon-sun { display: none; }

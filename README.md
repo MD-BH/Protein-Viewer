@@ -109,9 +109,17 @@ The default is a **640 px long edge, 4 seconds per turn, 20 fps**. Choose a
 480/640/800 px long edge, 2/4/6 seconds, and 10/20 fps. The canvas aspect ratio is
 preserved. GIF uses a limited color palette, so some color quantization is normal.
 
+The live viewer follows the page theme: pure white in light mode and dark
+(`#071019`) in dark mode. **GIF background** independently selects **Pure white**
+or **Dark**, defaulting to pure white each time the page opens. Changing this
+selection does not change the live view; it is applied only during export and
+is not saved across page reloads.
+The white canvas is exactly `#FFFFFF`; GIF palette quantization can introduce a
+slight color difference in the saved image (for example, RGB 254 instead of 255).
+
 Structure controls are temporarily locked while exporting. Progress shows capture,
 encoding and saving; **Cancel** is available until saving starts. The original
-view and controls are restored on success, cancellation or failure.
+view, theme background and controls are restored on success, cancellation or failure.
 
 The project server creates `gifs/` on the first successful export and saves
 `PDBname-UTCtimestamp-uniqueID.gif` without overwriting existing files. A link to
@@ -141,8 +149,9 @@ its Chromium browser, and Pillow):
 python tests/verify_gif_browser.py
 ```
 
-This builds the page, saves a sample GIF in `gifs/`, checks its decoded frames and
-timing, and exercises cancellation, worker failures, heartbeat and save failures.
+This builds the page, saves white- and dark-background sample GIFs in `gifs/`,
+checks their decoded frames and timing, and exercises theme switching,
+cancellation, worker failures, heartbeat and save failures.
 
 The browser app source lives in `viewer_src/`. After editing `viewer_src/` or
 `build_viewer.py`, rerun:

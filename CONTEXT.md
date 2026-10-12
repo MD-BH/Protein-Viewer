@@ -16,6 +16,7 @@ _Avoid_: Viewer page
 
 **Rotation GIF export**:
 A looping animation of the current protein view completing one horizontal turn,
-including its colors, hotspots, labels and selected highlight. It preserves the
-current framing and excludes the surrounding page controls.
+including its colors, hotspots, labels and selected highlight, with a white or
+dark background chosen independently of the page theme. It preserves the current
+framing and excludes the surrounding page controls.
 _Avoid_: Screen recording

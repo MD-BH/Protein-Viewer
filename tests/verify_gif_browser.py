@@ -1,4 +1,4 @@
-"""Optional integration check: requires Playwright, Chromium and Pillow; saves one sample GIF."""
+"""Optional integration check: requires Playwright, Chromium and Pillow; saves two sample GIFs."""
 import hashlib
 import sys
 import threading
@@ -10,6 +10,16 @@ from playwright.sync_api import sync_playwright
 from PIL import Image
 
 
+def canvas_background(page):
+    return page.evaluate("""() => {
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 1;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(state.viewer.getCanvas(), 0, 0, 1, 1, 0, 0, 1, 1);
+      return Array.from(ctx.getImageData(0, 0, 1, 1).data).slice(0, 3);
+    }""")
+
+
 def main():
     b.build_files()
     server = b.create_viewer_server('127.0.0.1', 0, b.ROOT, b.ViewerSessions())
@@ -19,7 +29,8 @@ def main():
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True, args=['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'])
-            page = browser.new_page(viewport={'width': 1280, 'height': 960})
+            page = browser.new_page(viewport={'width': 1280, 'height': 960}, device_scale_factor=2)
+            page.add_init_script("if (!localStorage.getItem('protein-viewer-theme')) localStorage.setItem('protein-viewer-theme', 'light');")
             errors = []
             page.on('pageerror', lambda e: errors.append(str(e)))
             heartbeats = []
@@ -28,6 +39,8 @@ def main():
             page.wait_for_function('state.viewer !== null', timeout=60000)
             page.wait_for_function('!state.pendingLoads')
             print('loaded', page.locator('#status').inner_text(), flush=True)
+            assert canvas_background(page) == [255, 255, 255]
+            assert page.locator('#gifBackground').input_value() == '#ffffff'
             # Reload must re-read the PDB rather than reuse a permanent text cache.
             pdb = page.evaluate('state.pdbs[state.pdbIndex]')
             updated_pdb = page.evaluate('state.pdbText') + '\nREMARK reload regression check\n'
@@ -35,6 +48,7 @@ def main():
             page.locator('#reloadPdb').click()
             page.wait_for_function("!state.pendingLoads && state.pdbText.includes('REMARK reload regression check')")
             page.unroute('**/' + pdb['path'])
+            assert canvas_background(page) == [255, 255, 255]
             text = 'A1'
             page.route('**/hotspots/reload-check.txt', lambda route: route.fulfill(body=text))
             read_hotspots = "fetchText({path: 'hotspots/reload-check.txt'})"
@@ -80,8 +94,17 @@ def main():
     };
   }""")
             before = page.evaluate('state.viewer.getView()')
+            assert canvas_background(page) == [255, 255, 255]
+            page.evaluate('window.viewerBeforeTheme = state.viewer')
+            page.locator('#themeToggle').click()
+            assert page.evaluate('state.viewer === window.viewerBeforeTheme')
+            assert page.evaluate('state.viewer.getView()') == before
+            assert canvas_background(page) == [7, 16, 25]
+            assert page.locator('#gifBackground').input_value() == '#ffffff'
             ratio = page.evaluate('state.viewer.getCanvas().width / state.viewer.getCanvas().height')
             page.locator('#exportGif').click()
+            page.wait_for_function('state.gifExportBusy')
+            assert canvas_background(page) == [255, 255, 255]
             page.wait_for_function('!state.gifExportBusy', timeout=180000)
             print('export status', page.locator('#gifStatus').inner_text(), flush=True)
             assert page.locator('#gifResult').is_visible()
@@ -97,6 +120,8 @@ def main():
                 image.seek(i)
                 duration += image.info['duration']
                 rgb = image.convert('RGB')
+                # The source is exactly white; GIF palette quantization can shift it by one level.
+                assert all(channel >= 254 for channel in rgb.getpixel((0, 0)))
                 frames.append(hashlib.sha256(rgb.tobytes()).digest())
                 pink_pixels += sum(count for count, (red, green, blue) in rgb.getcolors(image.width * image.height)
                                    if red > 80 and red > green * 1.3 and blue > green * 1.05 and red > blue)
@@ -108,7 +133,10 @@ def main():
             assert not page.locator('.stage').evaluate('(e)=>e.inert')
             assert page.locator('#viewer canvas').count() == 1
 
+            expected_background = [7, 16, 25]
+
             def assert_restored():
+                assert canvas_background(page) == expected_background
                 assert page.evaluate('state.viewer.getView()') == before
                 assert page.evaluate('window.liveGifWorkers') == 0
                 assert not page.locator('.stage').evaluate('(e)=>e.inert')
@@ -117,10 +145,32 @@ def main():
                 assert page.locator('#cancelGif').is_hidden()
                 assert page.locator('#viewer canvas').count() == 1
             assert_restored()
-            saved = set((b.ROOT / 'gifs').glob('*.gif'))
             page.locator('#gifSize').select_option('480')
             page.locator('#gifDuration').select_option('2')
             page.locator('#gifFps').select_option('10')
+            # Inverse combination: light page, dark GIF, then restore the light canvas.
+            page.locator('#themeToggle').click()
+            expected_background = [255, 255, 255]
+            page.locator('#gifBackground').select_option('#071019')
+            assert_restored()
+            page.locator('#exportGif').click()
+            page.wait_for_function('state.gifExportBusy')
+            assert canvas_background(page) == [7, 16, 25]
+            page.wait_for_function('!state.gifExportBusy', timeout=180000)
+            assert page.locator('#gifResult').is_visible()
+            dark_path = b.ROOT / page.locator('#gifResult').get_attribute('href')
+            with Image.open(dark_path) as dark_gif:
+                assert max(dark_gif.size) == 480 and dark_gif.n_frames == 20
+                assert dark_gif.info['loop'] == 0
+                duration = 0
+                for i in range(dark_gif.n_frames):
+                    dark_gif.seek(i)
+                    duration += dark_gif.info['duration']
+                    pixel = dark_gif.convert('RGB').getpixel((0, 0))
+                    assert all(abs(actual - expected) <= 2 for actual, expected in zip(pixel, (7, 16, 25)))
+                assert duration == 2000
+            assert_restored()
+            saved = set((b.ROOT / 'gifs').glob('*.gif'))
             # Capture cancellation also exercises duplicate clicks and viewport resizing.
             page.locator('#exportGif').click()
             page.wait_for_function('state.gifExportBusy')
@@ -160,8 +210,12 @@ def main():
             assert_restored()
             page.unroute('**/__viewer/export-gif?*')
             assert set((b.ROOT / 'gifs').glob('*.gif')) == saved
+            page.reload()
+            page.wait_for_function('state.viewer !== null && !state.pendingLoads')
+            assert canvas_background(page) == [255, 255, 255]
+            assert page.locator('#gifBackground').input_value() == '#ffffff'
             assert not errors, errors
-            print('PASS: reload, hotspot matching, GIF frames/timing/loop, view restoration, cancellation, workers, heartbeat, failed save', flush=True)
+            print('PASS: theme/backgrounds, reload, hotspot matching, GIF frames/timing/loop, view restoration, cancellation, workers, heartbeat, failed save', flush=True)
             browser.close()
     finally:
         server.shutdown()
